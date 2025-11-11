@@ -50,6 +50,7 @@ class Executor(object):
             self.interval = int(args.interval)
             self.pidFile = args.pidfile
             self.logfile = args.logfile
+            self.run_once = getattr(args, 'run_once', False)
             self.logger = self.SetupLogging(self.logfile, args.loglevel)
             self.context = Daemonize(args.daemon, self.logger,
                 group=args.group,
@@ -87,6 +88,8 @@ class Executor(object):
             help='After daemonizing run the process as the following user id.')
         parser.add_argument('--gid', '-g', dest='group', required=False,
             help='After daemonizing run the process as the following group id.')
+        parser.add_argument('--run-once', action='store_true', default=False,
+            help='Poll all devices once and exit (no continuous monitoring).')
         parser.add_argument('config',
             help='Path to the config file')
 
@@ -174,6 +177,12 @@ class Executor(object):
                                 self.logger.error('Callback returned too many failures. Initiating shutdown.')
                                 self.__shutdown = True
                         failures = 0
+
+                        # Exit after one poll if --run-once is specified
+                        if self.run_once:
+                            self.logger.info('Run-once mode: exiting after single poll')
+                            self.__shutdown = True
+
                         if not self.__shutdown:
                             # This actually flushes the metric pipeline. We will attempt to batch
                             # everything we currently have and return a tuple indicating what was

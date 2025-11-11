@@ -85,9 +85,14 @@ python -m kasa_monitor -d --pidfile=/var/run/kasa-monitor.pid /etc/monitor.conf
 
 # Debug mode
 python -m kasa_monitor -o --loglevel=DEBUG --debug /etc/monitor.conf
+
+# Poll once and exit (no continuous monitoring)
+python -m kasa_monitor --run-once -o --loglevel=INFO /etc/monitor.conf
 ```
 
 **Note**: Device polling uses asyncio for concurrent operations, dramatically improving performance when monitoring multiple devices.
+
+**Run-once mode**: Use `--run-once` to poll all devices one time and exit. This is useful for testing configurations or running on-demand polls via cron/scheduled tasks.
 
 ## Docker Usage
 
