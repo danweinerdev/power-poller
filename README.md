@@ -72,51 +72,22 @@ total = float
 
 ## Command Reference
 
-### Status Command
-
-Display comprehensive device information:
-
-```bash
-python -m kasa_monitor status --device 192.168.1.100
-```
-
-Output includes:
-- Device information (model, alias, IP address)
-- Current state (on/off, uptime)
-- Energy meter data (voltage, amperage, power consumption)
-- Network status (WiFi signal strength, MAC address)
-
-### Interactive Mode
-
-Control devices interactively:
-
-```bash
-python -m kasa_monitor interactive --device 192.168.1.100
-```
-
-Available commands:
-- `toggle` - Toggle device on/off
-- `list` - Show all available devices
-- `use <device>` - Select a specific device
-- `set alias <name>` - Change device alias
-- `reboot` - Reboot the device
-- `help` - Show available commands
-- `quit` - Exit interactive mode
-
 ### Run (Daemon Mode)
 
-Continuously poll devices and send metrics to InfluxDB:
+Continuously poll devices concurrently and send metrics to InfluxDB:
 
 ```bash
 # Run in foreground with logging to stdout
-python -m kasa_monitor run -o --loglevel=INFO /etc/monitor.conf
+python -m kasa_monitor -o --loglevel=INFO /etc/monitor.conf
 
 # Run as daemon (POSIX only)
-python -m kasa_monitor run -d --pidfile=/var/run/kasa-monitor.pid /etc/monitor.conf
+python -m kasa_monitor -d --pidfile=/var/run/kasa-monitor.pid /etc/monitor.conf
 
 # Debug mode
-python -m kasa_monitor run -o --loglevel=DEBUG --debug /etc/monitor.conf
+python -m kasa_monitor -o --loglevel=DEBUG --debug /etc/monitor.conf
 ```
+
+**Note**: Device polling uses asyncio for concurrent operations, dramatically improving performance when monitoring multiple devices.
 
 ## Docker Usage
 
@@ -134,14 +105,6 @@ docker run -d \
   -v $PWD/config/monitor.conf:/etc/monitor.conf:ro \
   --name kasa-monitor \
   kasa-monitor:latest
-
-# Status check
-docker run --rm \
-  kasa-monitor:latest status --device 192.168.1.100
-
-# Interactive mode
-docker run -it --rm \
-  kasa-monitor:latest interactive --device 192.168.1.100
 ```
 
 ## Architecture
@@ -157,36 +120,31 @@ kasa_monitor/
 │   ├── executor.py # Main execution framework
 │   ├── metrics.py  # Metrics pipeline
 │   └── utils.py    # System utilities
-├── devices/        # KASA device support
-│   ├── device.py   # Base device class
-│   ├── plug.py     # Smart plug implementation
-│   ├── bulb.py     # Smart bulb implementation
-│   ├── lightstrip.py # Light strip implementation
-│   ├── emeter.py   # Energy meter handler
-│   ├── discovery.py # Device discovery
-│   └── utils.py    # Device utilities
+├── devices/        # KASA device support (python-kasa)
+│   ├── async_device.py # Async device wrapper
+│   ├── exceptions.py   # Device exceptions
+│   └── utils.py        # Device utilities
 └── commands/       # CLI commands
-    ├── poll.py     # Polling/daemon mode
-    ├── status.py   # Status command
-    └── interactive.py # Interactive mode
+    └── async_poll.py  # Async polling with concurrent operations
 ```
 
 ### Device Protocol
 
-KASA devices use a proprietary TCP protocol on port 9999 with XOR encryption (key: 0xAB). The library handles:
-- Connection management
-- Encryption/decryption
-- JSON command formatting
-- Response caching
-- Error handling
+Uses the official [python-kasa](https://python-kasa.readthedocs.io/) library for device communication:
+- Async/await interface
+- Concurrent device operations
+- Automatic protocol handling
+- Support for both KASA and Tapo devices
+- No custom encryption implementation needed
 
 ### Monitoring Flow
 
-1. **Discovery**: `LoadDevice(address)` queries device sysinfo
-2. **Type Detection**: `GetDeviceType()` determines device class
-3. **Polling**: Periodic calls to `GetEmeter().GetRealtime()`
-4. **Metrics**: Data converted to InfluxDB Point objects
-5. **Batch Upload**: Metrics queued and sent in configurable batches
+1. **Discovery**: `discover_devices()` connects to all devices concurrently
+2. **Polling**: `poll_devices()` uses async map-reduce for concurrent data collection
+3. **Metrics**: Data converted to InfluxDB Point objects
+4. **Batch Upload**: Metrics queued and sent in configurable batches
+
+**Performance**: Concurrent async operations poll multiple devices simultaneously, reducing total cycle time by orders of magnitude.
 
 ## Supported Devices
 
