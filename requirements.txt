@@ -1,9 +1,10 @@
 certifi==2025.1.31
+charset-normalizer==3.4.1
+idna==3.10
 influxdb-client==1.48.0
-PyMonitorLib @ git+https://github.com/Aralocke/PyMonitorLib@e22a990c9cd44c8b0a42ad137b8b92187d60c2fe
 python-dateutil==2.9.0.post0
 reactivex==4.0.4
-setuptools==75.8.0
+requests==2.32.3
 six==1.17.0
 typing_extensions==4.12.2
 urllib3==2.3.0
