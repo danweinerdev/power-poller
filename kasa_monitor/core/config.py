@@ -193,6 +193,8 @@ class Config(object):
         """
         if not self.IsLoaded():
             self.Load()
+        if self.database is None:
+            return None, {}
         return self.database, self.config[self.database]
 
     def GetField(self, measurement, field):
@@ -284,22 +286,28 @@ class Config(object):
         if not parser.has_section(self.GLOBAL_SECTION):
             raise InvalidConfigError('No global section')
 
-        self.RequiredFields(parser, self.GLOBAL_SECTION, ['database', self.root])
-        self.database = parser.get(self.GLOBAL_SECTION, 'database')
+        # Database configuration is optional if not needed
+        if parser.has_option(self.GLOBAL_SECTION, 'database'):
+            self.RequiredFields(parser, self.GLOBAL_SECTION, ['database', self.root])
+            self.database = parser.get(self.GLOBAL_SECTION, 'database')
 
-        if not self.database or self.database not in self.SUPPORTED_DATABASES:
-            raise InvalidConfigError('Invalid or unsupported database value')
+            if not self.database or self.database not in self.SUPPORTED_DATABASES:
+                raise InvalidConfigError('Invalid or unsupported database value')
 
-        self.config[self.database] = {}
-        for field, hint in self.DATABASE_FIELDS[self.database]:
-            if parser.has_option(self.database, field):
-                try:
-                    self.config[self.database][field] = ConvertValue(
-                        parser.get(self.database, field),
-                        hint=hint)
-                except ConversionFailure:
-                    raise InvalidConfigError("Invalid field '{}' expected type '{}'"
-                        .format(field, hint))
+            self.config[self.database] = {}
+            for field, hint in self.DATABASE_FIELDS[self.database]:
+                if parser.has_option(self.database, field):
+                    try:
+                        self.config[self.database][field] = ConvertValue(
+                            parser.get(self.database, field),
+                            hint=hint)
+                    except ConversionFailure:
+                        raise InvalidConfigError("Invalid field '{}' expected type '{}'"
+                            .format(field, hint))
+        else:
+            # No database configured - only require root section
+            self.RequiredFields(parser, self.GLOBAL_SECTION, [self.root])
+            self.database = None
 
         root = parser.get(self.GLOBAL_SECTION, self.root)
         if not root:

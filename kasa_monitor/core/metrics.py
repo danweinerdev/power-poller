@@ -75,7 +75,7 @@ class MetricPipeline(object):
 
     DEFAULT_BATCH_SIZE = 10
 
-    def __init__(self, config: Config, batchSize=DEFAULT_BATCH_SIZE, logger=None):
+    def __init__(self, config: Config, batchSize=DEFAULT_BATCH_SIZE, logger=None, echo_mode=False):
         """
         Constructor for the measurement pipeline.
 
@@ -84,6 +84,7 @@ class MetricPipeline(object):
                           call to the database.
         :param logger: Optional logger instance. If no instance is provided log messages will
                        be skipped.
+        :param echo_mode: If True, print metrics to stdout instead of sending to database.
         """
         self.config = config
         self.logger = logger
@@ -91,6 +92,7 @@ class MetricPipeline(object):
         self.queue = []
         self.database = None
         self.shutdown = False
+        self.echo_mode = echo_mode
 
     def __call__(self, metrics: list):
         self.Enqueue(metrics)
@@ -140,6 +142,8 @@ class MetricPipeline(object):
         and retried on the next iteration pass. The inner loop will automatically handle
         batching based on the configured batch size.
 
+        In echo mode, prints metrics to stdout instead of sending to database.
+
         :return: None
         """
         if self.shutdown:
@@ -166,6 +170,19 @@ class MetricPipeline(object):
                     point.field(name, field['clean'])
                 point.time(metric.timestamp, WritePrecision.MS)
                 points.append(point)
+
+            # Echo mode: print metrics to stdout instead of sending to database
+            if self.echo_mode:
+                for point in points:
+                    # Format: measurement,tag=value field=value timestamp
+                    line_protocol = point.to_line_protocol()
+                    print(line_protocol)
+                sent += len(points)
+                # Remove processed metrics from queue
+                while count > 0:
+                    self.queue.pop(0)
+                    count -= 1
+                continue
 
             try:
                 if not self.database:

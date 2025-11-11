@@ -51,11 +51,12 @@ class Executor(object):
             self.pidFile = args.pidfile
             self.logfile = args.logfile
             self.run_once = getattr(args, 'run_once', False)
+            self.echo_metrics = getattr(args, 'echo_metrics', False)
             self.logger = self.SetupLogging(self.logfile, args.loglevel)
             self.context = Daemonize(args.daemon, self.logger,
                 group=args.group,
                 user=args.user)
-            self.pipeline = MetricPipeline(self.config, logger=self.logger)
+            self.pipeline = MetricPipeline(self.config, logger=self.logger, echo_mode=self.echo_metrics)
             self.__shutdown = False
             self.__rd, self.__wr = None, None
             self.__reload = False
@@ -90,6 +91,8 @@ class Executor(object):
             help='After daemonizing run the process as the following group id.')
         parser.add_argument('--run-once', action='store_true', default=False,
             help='Poll all devices once and exit (no continuous monitoring).')
+        parser.add_argument('--echo-metrics', action='store_true', default=False,
+            help='Print metrics to stdout instead of sending to InfluxDB.')
         parser.add_argument('config',
             help='Path to the config file')
 

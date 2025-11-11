@@ -70,6 +70,8 @@ power = float
 total = float
 ```
 
+**Note**: When using `--echo-metrics`, the `[global] database` field and database-specific sections (like `[influxdb]`) are optional and can be omitted.
+
 ## Command Reference
 
 ### Run (Daemon Mode)
@@ -88,11 +90,16 @@ python -m kasa_monitor -o --loglevel=DEBUG --debug /etc/monitor.conf
 
 # Poll once and exit (no continuous monitoring)
 python -m kasa_monitor --run-once -o --loglevel=INFO /etc/monitor.conf
+
+# Echo metrics to stdout (no database required)
+python -m kasa_monitor --echo-metrics --run-once -o /etc/monitor.conf
 ```
 
 **Note**: Device polling uses asyncio for concurrent operations, dramatically improving performance when monitoring multiple devices.
 
-**Run-once mode**: Use `--run-once` to poll all devices one time and exit. This is useful for testing configurations or running on-demand polls via cron/scheduled tasks.
+**Options**:
+- `--run-once`: Poll all devices one time and exit. Useful for testing or running via cron/scheduled tasks.
+- `--echo-metrics`: Print metrics to stdout in InfluxDB line protocol format instead of sending to database. Database configuration becomes optional with this flag.
 
 ## Docker Usage
 
