@@ -22,8 +22,22 @@ A unified Python 3 library and CLI tool for monitoring and controlling TP-Link K
 git clone <repository-url>
 cd tplink-smart-devices
 
-# Install dependencies
+# Quick install using Make
+make install
+
+# Or install manually
 pip install -r requirements.txt
+```
+
+For development:
+
+```bash
+# Install with development dependencies
+make install-dev
+
+# Or manually
+pip install -r requirements.txt -r requirements-test.txt
+pip install -e ".[dev]"
 ```
 
 ### Basic Usage
@@ -208,18 +222,45 @@ See `requirements.txt` for complete dependency list.
 - **macOS**: Full support including daemonization
 - **Windows**: Full support except daemonization features
 
-## Testing
+## Development
 
-Run the test suite with pytest:
+### Building and Testing
+
+The project includes a comprehensive Makefile for common tasks:
 
 ```bash
-# Install test dependencies
-pip install -r requirements-test.txt
+# Show all available commands
+make help
 
-# Run all tests
+# Run tests
+make test
+
+# Run tests with coverage
+make test-coverage
+
+# Build distribution packages
+make build
+
+# Clean build artifacts
+make clean
+
+# Run full CI pipeline
+make ci
+```
+
+### Testing
+
+Run the test suite:
+
+```bash
+# Using Make
+make test              # Run all tests
+make test-coverage     # Run with coverage report
+make test-fast         # Quick test run
+make test-unit         # Unit tests only
+
+# Using pytest directly
 pytest
-
-# Run with coverage
 pytest --cov=kasa_monitor --cov-report=html
 ```
 

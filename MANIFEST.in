@@ -1,0 +1,24 @@
+# Include documentation
+include README.md
+include LICENSE
+include CLAUDE.md
+include ASYNC_REFACTORING.md
+include REFACTORING_SUMMARY.md
+
+# Include configuration files
+include pyproject.toml
+include pytest.ini
+include Makefile
+
+# Include requirements files
+include requirements.txt
+include requirements-test.txt
+
+# Include test files
+recursive-include tests *.py
+
+# Exclude build artifacts
+global-exclude *.pyc
+global-exclude __pycache__
+global-exclude *.so
+global-exclude .DS_Store

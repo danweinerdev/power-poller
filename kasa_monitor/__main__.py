@@ -24,6 +24,11 @@ from kasa_monitor.commands import AsyncPoll
 from kasa_monitor.core import Execute
 
 
-if __name__ == '__main__':
+def main():
+    """Main entry point for kasa-monitor CLI."""
     # Use AsyncPoll for concurrent device polling
     Execute(AsyncPoll, 'devices', command='run', commands=None)
+
+
+if __name__ == '__main__':
+    main()
