@@ -14,22 +14,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from os.path import dirname, exists, join, realpath
-import os
-import sys
+"""
+Legacy CLI entry point for backwards compatibility.
 
+This file is maintained for backwards compatibility with existing scripts
+and workflows. New users should use the recommended entry point:
 
-rootPath = realpath(join(__file__, os.pardir))
-parentPath = dirname(rootPath)
+    python -m kasa_monitor [command] [options]
 
-if exists(join(parentPath, 'PyMonitorLib')):
-    sys.path.insert(0, join(parentPath, 'PyMonitorLib'))
+This legacy entry point will continue to work but may be deprecated in
+a future release.
+"""
 
-if exists(join(rootPath, 'commands')):
-    sys.path.insert(0, rootPath)
-
-from commands import Interactive, Poll, Status
-from monitor.lib import Execute
+from kasa_monitor.commands import Interactive, Poll, Status
+from kasa_monitor.core import Execute
 
 
 def ConfigureParams(parser):
