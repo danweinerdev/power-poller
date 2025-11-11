@@ -14,36 +14,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from kasa_monitor.commands import Interactive, Poll, Status
+"""
+KASA Monitor - TP-Link KASA device monitoring with InfluxDB integration.
+
+Main entry point for concurrent async device polling and metrics collection.
+"""
+
+from kasa_monitor.commands import AsyncPoll
 from kasa_monitor.core import Execute
 
 
-def ConfigureParams(parser):
-    """
-    Add the default options for any command on this tool.
-
-    :param parser: Command sub-parser
-    :return: Updated parser object.
-    """
-    parser.add_argument('--device', '-d', action='append', dest='devices',
-        help='List of known devices. If provided discovery is skipped.')
-    return parser
-
-
-def Setup(args):
-    """
-    Setup the argument parsers for the extra sub-commands for the CLI tool.
-    This will configure the given callbacks and setup for bypassing the normal
-    poll mode and triggering secondary callbacks.
-
-    :param args: Callback registration tool.
-    :return: None
-    """
-    ConfigureParams(args.Register('status', Status,
-        help='Status command for polling the state of the configured devices'))
-    ConfigureParams(args.Register('interactive', Interactive,
-        help='Run the interactive mode for the CLI tool.'))
-
-
 if __name__ == '__main__':
-    Execute(Poll, 'devices', command='run', commands=Setup)
+    # Use AsyncPoll for concurrent device polling
+    Execute(AsyncPoll, 'devices', command='run', commands=None)

@@ -12,10 +12,35 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .bulb import Bulb
-from .device import Device, DeviceType
-from .lightstrip import LightStrip
-from .plug import Plug
-from .discovery import GetDeviceType, LoadDevice, LoadDevices
+"""
+KASA device interface using python-kasa library.
+
+This module provides async device discovery and polling using the official
+python-kasa library for TP-Link KASA and Tapo smart home devices.
+"""
+
+# Async device interface
+from .async_device import (
+    KasaDeviceWrapper,
+    discover_device,
+    discover_devices,
+    poll_devices
+)
+
+# Utilities and exceptions
 from .exceptions import ConnectionError, DeviceError, InputError
-from .utils import Cache, IsValidIPv4, IsValidMacAddress
+from .utils import IsValidIPv4, IsValidMacAddress
+
+__all__ = [
+    # Device API
+    'KasaDeviceWrapper',
+    'discover_device',
+    'discover_devices',
+    'poll_devices',
+    # Utilities
+    'ConnectionError',
+    'DeviceError',
+    'InputError',
+    'IsValidIPv4',
+    'IsValidMacAddress'
+]

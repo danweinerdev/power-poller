@@ -12,8 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .interactive import Interactive
-from .poll import Poll
-from .status import Status
+"""
+KASA Monitor command implementations.
 
-__all__ = ['Interactive', 'Poll', 'Status']
+Commands use async device interface for efficient concurrent operations.
+"""
+
+from .async_poll import AsyncPoll
+
+# Legacy command aliases for backwards compatibility
+Poll = AsyncPoll
+Interactive = None  # Removed - use python-kasa CLI tools instead
+Status = None  # Removed - use python-kasa CLI tools instead
+
+__all__ = ['AsyncPoll', 'Poll', 'Interactive', 'Status']
