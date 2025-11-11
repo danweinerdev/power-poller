@@ -208,6 +208,23 @@ See `requirements.txt` for complete dependency list.
 - **macOS**: Full support including daemonization
 - **Windows**: Full support except daemonization features
 
+## Testing
+
+Run the test suite with pytest:
+
+```bash
+# Install test dependencies
+pip install -r requirements-test.txt
+
+# Run all tests
+pytest
+
+# Run with coverage
+pytest --cov=kasa_monitor --cov-report=html
+```
+
+See [tests/README.md](tests/README.md) for detailed testing documentation.
+
 ## Troubleshooting
 
 ### Device Not Found
