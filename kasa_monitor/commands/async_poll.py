@@ -117,36 +117,24 @@ class AsyncPollManager:
 
                 # Find config for this device
                 device_config = None
+                device_name = None
                 for name, cfg in self.config.items():
                     if cfg.get('address') == result['address']:
                         device_config = cfg
+                        device_name = name
                         break
 
                 if not device_config:
                     continue
 
-                # Create metric if device has emeter data
-                if 'emeter' in result and device_config.get('measurements'):
-                    tags = {'device': device_config.get('device', result['device'])}
-                    tags.update(device_config.get('tags', {}))
-
-                    for measurement in device_config['measurements']:
-                        metric = Metric(result['device'], measurement, tags=tags)
-
-                        # Get configured fields for this measurement
-                        if measurement in device_config.get('measurements', {}):
-                            configured_fields = device_config['measurements'][measurement]
-                        else:
-                            configured_fields = []
-
-                        # Add configured fields from emeter data
-                        emeter_data = result['emeter']
-                        for field in configured_fields:
-                            if field in emeter_data:
-                                metric.AddField(field, emeter_data[field])
-
-                        if metric.fields:
-                            pipeline(metric)
+                # Handle devices with children
+                if device_config.get('has_children', False):
+                    await self._poll_device_with_children(result, device_name, device_config, pipeline)
+                else:
+                    # Create metric for regular device if it has emeter data
+                    if 'emeter' in result and device_config.get('measurements'):
+                        self._create_metrics(result['device'], result['emeter'],
+                                           device_config, {}, pipeline)
 
             return Result.SUCCESS
 
@@ -154,6 +142,102 @@ class AsyncPollManager:
             if self.logger:
                 self.logger.error(f"Error during polling: {e}")
             return Result.FAILURE
+
+    async def _poll_device_with_children(self, result: Dict[str, Any], device_name: str,
+                                        device_config: Dict[str, Any], pipeline) -> None:
+        """
+        Poll a device with children (smart power strip) and create metrics for parent and children.
+
+        :param result: Poll result containing device info
+        :param device_name: Name of parent device from config
+        :param device_config: Configuration for parent device
+        :param pipeline: Metrics pipeline
+        """
+        # Find the actual device wrapper
+        device_wrapper = None
+        for dev in self.devices:
+            if dev.address == result['address']:
+                device_wrapper = dev
+                break
+
+        if not device_wrapper:
+            return
+
+        # Poll parent device if configured
+        if device_config.get('poll_parent', False):
+            if 'emeter' in result and device_config.get('measurements'):
+                # Add parent=true tag to distinguish from children
+                parent_tags = {'parent': 'true'}
+                self._create_metrics(result['device'], result['emeter'],
+                                   device_config, parent_tags, pipeline)
+
+        # Poll child devices
+        children_config = device_config.get('children', {})
+        for child_index, child_config in children_config.items():
+            try:
+                # Get child device by index
+                child_wrapper = device_wrapper.get_child_by_index(child_index)
+                if not child_wrapper:
+                    if self.logger:
+                        self.logger.warning(
+                            f"Child device at index {child_index} not found for parent '{device_name}'"
+                        )
+                    continue
+
+                # Update child device state
+                await child_wrapper.update()
+
+                # Get child emeter data
+                if child_wrapper.has_emeter:
+                    child_emeter = await child_wrapper.get_emeter_realtime()
+                    if child_emeter and child_config.get('measurements'):
+                        # Add child-specific tags
+                        child_tags = {
+                            'parent': device_name,
+                            'child_index': str(child_index)
+                        }
+
+                        # Use configured device name for child
+                        child_device_name = child_config.get('device', f"{device_name}_child_{child_index}")
+
+                        self._create_metrics(child_device_name, child_emeter,
+                                           child_config, child_tags, pipeline)
+            except Exception as e:
+                if self.logger:
+                    self.logger.error(
+                        f"Error polling child {child_index} of device '{device_name}': {e}"
+                    )
+
+    def _create_metrics(self, device_name: str, emeter_data: Dict[str, Any],
+                       config: Dict[str, Any], extra_tags: Dict[str, str], pipeline) -> None:
+        """
+        Create metrics for a device (parent or child) and send to pipeline.
+
+        :param device_name: Name of the device for the metric
+        :param emeter_data: Energy meter data
+        :param config: Device configuration with measurements and tags
+        :param extra_tags: Additional tags to add (e.g., parent, child_index)
+        :param pipeline: Metrics pipeline
+        """
+        # Build tags from config and extra_tags
+        tags = {'device': config.get('device', device_name)}
+        tags.update(config.get('tags', {}))
+        tags.update(extra_tags)
+
+        # Create metric for each configured measurement
+        for measurement in config['measurements']:
+            metric = Metric(device_name, measurement, tags=tags)
+
+            # Get configured fields for this measurement
+            configured_fields = config['measurements'][measurement]
+
+            # Add configured fields from emeter data
+            for field in configured_fields:
+                if field in emeter_data:
+                    metric.AddField(field, emeter_data[field])
+
+            if metric.fields:
+                pipeline(metric)
 
 
 # Global manager instance to persist devices across poll cycles

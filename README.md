@@ -86,6 +86,86 @@ total = float
 
 **Note**: When using `--echo-metrics`, the `[global] database` field and database-specific sections (like `[influxdb]`) are optional and can be omitted.
 
+### Child Devices (Smart Power Strips)
+
+KASA Monitor supports devices with individual child outlets, such as smart power strips. Each outlet can be monitored separately with its own metrics and tags.
+
+See [config/powerstrip-example.conf](config/powerstrip-example.conf) for a complete example.
+
+**Key Configuration:**
+
+```ini
+[global]
+database = influxdb
+devices = office_powerstrip
+
+[influxdb]
+server = 127.0.0.1
+port = 8086
+database = smart-home
+
+; Parent device (the power strip itself)
+[office_powerstrip]
+address = 10.0.0.100
+has_children = true          ; Mark device as having children
+poll_parent = true           ; Optional: also collect parent aggregate metrics
+measurements = power-metrics
+tags = location=office type=strip
+
+; Child devices (individual outlets)
+; Format: [parent_name.child_N] where N is zero-based index
+
+[office_powerstrip.child_0]
+device = desk_lamp           ; Friendly name for metrics
+measurements = power-metrics
+tags = outlet=0 appliance=lamp
+
+[office_powerstrip.child_1]
+device = monitor
+measurements = power-metrics
+tags = outlet=1 appliance=monitor
+
+[office_powerstrip.child_2]
+device = laptop_charger
+measurements = power-metrics
+tags = outlet=2 appliance=charger
+
+[power-metrics]
+fields = current:float voltage:float power:float total:float
+```
+
+**Resulting Metrics:**
+
+With this configuration, you'll get separate metrics for:
+- **Parent device** (if `poll_parent = true`): Tagged with `parent=true`
+- **Each child outlet**: Tagged with `parent=<parent_name>` and `child_index=<N>`
+
+Example InfluxDB line protocol output:
+
+```
+power-metrics,device=office_powerstrip,location=office,type=strip,parent=true current=1.2,voltage=120.0,power=144.0,total=5.2
+power-metrics,device=desk_lamp,location=office,type=strip,parent=office_powerstrip,child_index=0,outlet=0,appliance=lamp current=0.1,voltage=120.0,power=12.0,total=0.5
+power-metrics,device=monitor,location=office,type=strip,parent=office_powerstrip,child_index=1,outlet=1,appliance=monitor current=0.3,voltage=120.0,power=36.0,total=1.2
+power-metrics,device=laptop_charger,location=office,type=strip,parent=office_powerstrip,child_index=2,outlet=2,appliance=charger current=0.8,voltage=120.0,power=96.0,total=3.5
+```
+
+**Querying Child Devices:**
+
+```flux
+// Total power for all outlets on a strip
+from(bucket: "smart-home")
+  |> range(start: -1h)
+  |> filter(fn: (r) => r.parent == "office_powerstrip")
+  |> filter(fn: (r) => r._field == "power")
+  |> sum()
+
+// Individual outlet
+from(bucket: "smart-home")
+  |> range(start: -1h)
+  |> filter(fn: (r) => r.device == "desk_lamp")
+  |> filter(fn: (r) => r._field == "power")
+```
+
 ## Command Reference
 
 ### Run (Daemon Mode)

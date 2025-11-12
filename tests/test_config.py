@@ -829,3 +829,415 @@ voltage = float
         config.Reload()
         devices = config.GetRoot()
         assert devices['plug1']['address'] == '192.168.1.200'
+
+
+class TestChildDevices:
+    """Test child device configuration for smart power strips."""
+
+    @pytest.fixture
+    def powerstrip_config_file(self, temp_config_file):
+        """Create a valid config file with child devices."""
+        config_content = """[global]
+database = influxdb
+devices = strip1
+
+[influxdb]
+server = 127.0.0.1
+port = 8086
+database = smart-home
+
+[strip1]
+address = 10.0.0.100
+has_children = true
+poll_parent = true
+measurements = power-metrics
+tags = location=office type=strip
+
+[strip1.child_0]
+device = desk_lamp
+measurements = power-metrics
+tags = outlet=0 appliance=lamp
+
+[strip1.child_1]
+device = monitor
+measurements = power-metrics
+tags = outlet=1 appliance=monitor
+
+[power-metrics]
+voltage = float
+current = float
+power = float
+total = float
+"""
+        with open(temp_config_file, 'w') as f:
+            f.write(config_content)
+        return temp_config_file
+
+    def test_child_device_parsing(self, powerstrip_config_file):
+        """Test that child devices are parsed correctly."""
+        config = Config(powerstrip_config_file, 'devices')
+        config.Load()
+
+        devices = config.GetRoot()
+        assert 'strip1' in devices
+
+        strip_config = devices['strip1']
+        assert strip_config['has_children'] is True
+        assert strip_config['poll_parent'] is True
+        assert 'children' in strip_config
+        assert len(strip_config['children']) == 2
+
+    def test_child_device_indices(self, powerstrip_config_file):
+        """Test that child device indices are correct."""
+        config = Config(powerstrip_config_file, 'devices')
+        config.Load()
+
+        devices = config.GetRoot()
+        children = devices['strip1']['children']
+
+        assert 0 in children
+        assert 1 in children
+        assert children[0]['child_index'] == 0
+        assert children[1]['child_index'] == 1
+
+    def test_child_device_names(self, powerstrip_config_file):
+        """Test that child device friendly names are parsed."""
+        config = Config(powerstrip_config_file, 'devices')
+        config.Load()
+
+        devices = config.GetRoot()
+        children = devices['strip1']['children']
+
+        assert children[0]['device'] == 'desk_lamp'
+        assert children[1]['device'] == 'monitor'
+
+    def test_child_device_tags(self, powerstrip_config_file):
+        """Test that child device tags are parsed."""
+        config = Config(powerstrip_config_file, 'devices')
+        config.Load()
+
+        devices = config.GetRoot()
+        children = devices['strip1']['children']
+
+        assert children[0]['tags']['outlet'] == '0'
+        assert children[0]['tags']['appliance'] == 'lamp'
+        assert children[1]['tags']['outlet'] == '1'
+        assert children[1]['tags']['appliance'] == 'monitor'
+
+    def test_child_device_measurements(self, powerstrip_config_file):
+        """Test that child device measurements are validated."""
+        config = Config(powerstrip_config_file, 'devices')
+        config.Load()
+
+        devices = config.GetRoot()
+        children = devices['strip1']['children']
+
+        assert 'power-metrics' in children[0]['measurements']
+        assert 'power-metrics' in children[1]['measurements']
+        assert 'voltage' in children[0]['measurements']['power-metrics']
+        assert 'current' in children[0]['measurements']['power-metrics']
+
+    def test_child_without_has_children_flag(self, temp_config_file):
+        """Test that child sections require has_children flag on parent."""
+        config_content = """[global]
+database = influxdb
+devices = strip1
+
+[influxdb]
+server = 127.0.0.1
+port = 8086
+database = smart-home
+
+[strip1]
+address = 10.0.0.100
+measurements = power-metrics
+
+[strip1.child_0]
+device = outlet1
+measurements = power-metrics
+
+[power-metrics]
+voltage = float
+"""
+        with open(temp_config_file, 'w') as f:
+            f.write(config_content)
+
+        config = Config(temp_config_file, 'devices')
+        with pytest.raises(InvalidConfigError, match="must have 'has_children = true'"):
+            config.Load()
+
+    def test_child_with_unknown_parent(self, temp_config_file):
+        """Test that child sections require valid parent device."""
+        config_content = """[global]
+database = influxdb
+devices = strip1
+
+[influxdb]
+server = 127.0.0.1
+port = 8086
+database = smart-home
+
+[strip1]
+address = 10.0.0.100
+has_children = true
+measurements = power-metrics
+
+[strip2.child_0]
+device = outlet1
+measurements = power-metrics
+
+[power-metrics]
+voltage = float
+"""
+        with open(temp_config_file, 'w') as f:
+            f.write(config_content)
+
+        config = Config(temp_config_file, 'devices')
+        with pytest.raises(InvalidConfigError, match="references unknown parent"):
+            config.Load()
+
+    def test_child_missing_required_field(self, temp_config_file):
+        """Test that child sections require all required fields."""
+        config_content = """[global]
+database = influxdb
+devices = strip1
+
+[influxdb]
+server = 127.0.0.1
+port = 8086
+database = smart-home
+
+[strip1]
+address = 10.0.0.100
+has_children = true
+measurements = power-metrics
+
+[strip1.child_0]
+measurements = power-metrics
+
+[power-metrics]
+voltage = float
+"""
+        with open(temp_config_file, 'w') as f:
+            f.write(config_content)
+
+        config = Config(temp_config_file, 'devices')
+        with pytest.raises(InvalidConfigError, match="missing required field"):
+            config.Load()
+
+    def test_child_with_invalid_measurement(self, temp_config_file):
+        """Test that child measurements must be defined."""
+        config_content = """[global]
+database = influxdb
+devices = strip1
+
+[influxdb]
+server = 127.0.0.1
+port = 8086
+database = smart-home
+
+[strip1]
+address = 10.0.0.100
+has_children = true
+measurements = power-metrics
+
+[strip1.child_0]
+device = outlet1
+measurements = unknown-measurement
+
+[power-metrics]
+voltage = float
+"""
+        with open(temp_config_file, 'w') as f:
+            f.write(config_content)
+
+        config = Config(temp_config_file, 'devices')
+        with pytest.raises(InvalidConfigError, match="Unknown measurement"):
+            config.Load()
+
+    def test_multiple_children_different_indices(self, temp_config_file):
+        """Test configuration with many children at different indices."""
+        config_content = """[global]
+database = influxdb
+devices = strip1
+
+[influxdb]
+server = 127.0.0.1
+port = 8086
+database = smart-home
+
+[strip1]
+address = 10.0.0.100
+has_children = true
+poll_parent = false
+measurements = power-metrics
+
+[strip1.child_0]
+device = outlet0
+measurements = power-metrics
+
+[strip1.child_2]
+device = outlet2
+measurements = power-metrics
+
+[strip1.child_5]
+device = outlet5
+measurements = power-metrics
+
+[power-metrics]
+voltage = float
+"""
+        with open(temp_config_file, 'w') as f:
+            f.write(config_content)
+
+        config = Config(temp_config_file, 'devices')
+        config.Load()
+
+        devices = config.GetRoot()
+        children = devices['strip1']['children']
+
+        assert len(children) == 3
+        assert 0 in children
+        assert 2 in children
+        assert 5 in children
+        assert 1 not in children
+        assert children[0]['device'] == 'outlet0'
+        assert children[2]['device'] == 'outlet2'
+        assert children[5]['device'] == 'outlet5'
+
+    def test_poll_parent_defaults_to_false(self, temp_config_file):
+        """Test that poll_parent defaults to False if not specified."""
+        config_content = """[global]
+database = influxdb
+devices = strip1
+
+[influxdb]
+server = 127.0.0.1
+port = 8086
+database = smart-home
+
+[strip1]
+address = 10.0.0.100
+has_children = true
+measurements = power-metrics
+
+[strip1.child_0]
+device = outlet1
+measurements = power-metrics
+
+[power-metrics]
+voltage = float
+"""
+        with open(temp_config_file, 'w') as f:
+            f.write(config_content)
+
+        config = Config(temp_config_file, 'devices')
+        config.Load()
+
+        devices = config.GetRoot()
+        assert devices['strip1']['poll_parent'] is False
+
+    def test_child_with_no_tags(self, temp_config_file):
+        """Test that child devices can have no tags (optional field)."""
+        config_content = """[global]
+database = influxdb
+devices = strip1
+
+[influxdb]
+server = 127.0.0.1
+port = 8086
+database = smart-home
+
+[strip1]
+address = 10.0.0.100
+has_children = true
+measurements = power-metrics
+
+[strip1.child_0]
+device = outlet1
+measurements = power-metrics
+
+[power-metrics]
+voltage = float
+"""
+        with open(temp_config_file, 'w') as f:
+            f.write(config_content)
+
+        config = Config(temp_config_file, 'devices')
+        config.Load()
+
+        devices = config.GetRoot()
+        children = devices['strip1']['children']
+
+        # Tags should default to empty dict
+        assert children[0]['tags'] == {}
+
+    def test_child_additional_fields(self, temp_config_file):
+        """Test that child devices can have additional custom fields."""
+        config_content = """[global]
+database = influxdb
+devices = strip1
+
+[influxdb]
+server = 127.0.0.1
+port = 8086
+database = smart-home
+
+[strip1]
+address = 10.0.0.100
+has_children = true
+measurements = power-metrics
+
+[strip1.child_0]
+device = outlet1
+measurements = power-metrics
+custom_field = some_value
+priority = 5
+
+[power-metrics]
+voltage = float
+"""
+        with open(temp_config_file, 'w') as f:
+            f.write(config_content)
+
+        config = Config(temp_config_file, 'devices')
+        config.Load()
+
+        devices = config.GetRoot()
+        children = devices['strip1']['children']
+
+        assert children[0]['custom_field'] == 'some_value'
+        assert children[0]['priority'] == 5
+
+    def test_no_database_with_children(self, temp_config_file):
+        """Test that child devices work without database configuration (echo mode)."""
+        config_content = """[global]
+devices = strip1
+
+[strip1]
+address = 10.0.0.100
+has_children = true
+poll_parent = true
+measurements = power-metrics
+
+[strip1.child_0]
+device = outlet1
+measurements = power-metrics
+
+[power-metrics]
+voltage = float
+"""
+        with open(temp_config_file, 'w') as f:
+            f.write(config_content)
+
+        config = Config(temp_config_file, 'devices')
+        config.Load()
+
+        devices = config.GetRoot()
+        children = devices['strip1']['children']
+
+        assert len(children) == 1
+        assert children[0]['device'] == 'outlet1'
+        # Database should be None
+        db_type, db_config = config.GetDatabase()
+        assert db_type is None

@@ -166,6 +166,14 @@ class Config(object):
         ]}
     ENTRY_FIELDS = [
         ('measurements', ARRAY_TYPE, REQUIRED),
+        ('tags', HASH_TYPE, OPTIONAL),
+        ('has_children', BOOL_TYPE, OPTIONAL),
+        ('poll_parent', BOOL_TYPE, OPTIONAL)
+    ]
+
+    CHILD_FIELDS = [
+        ('device', STRING_TYPE, REQUIRED),
+        ('measurements', ARRAY_TYPE, REQUIRED),
         ('tags', HASH_TYPE, OPTIONAL)
     ]
 
@@ -381,6 +389,97 @@ class Config(object):
                         measurement, entry))
                 measurementMap[measurement] = measurements[measurement]
             values['measurements'] = measurementMap
+
+        # Parse child device sections (format: parent.child_N)
+        self._parse_child_devices(parser, measurements)
+
+    def _parse_child_devices(self, parser, measurements):
+        """
+        Parse child device sections with format: parent.child_N
+
+        This method identifies sections that follow the child device naming pattern,
+        validates they belong to a parent device with has_children=true, and stores
+        child configuration under the parent device.
+
+        :param parser: ConfigParser instance
+        :param measurements: Dictionary of available measurements
+        :return: None
+        """
+        import re
+
+        # Pattern to match child device sections: parent.child_N
+        child_pattern = re.compile(r'^(.+)\.child_(\d+)$')
+
+        # Find all child device sections
+        for section in parser.sections():
+            match = child_pattern.match(section)
+            if not match:
+                continue
+
+            parent_name = match.group(1)
+            child_index = int(match.group(2))
+
+            # Verify parent device exists and has has_children flag
+            if parent_name not in self.config[self.root]:
+                raise InvalidConfigError(
+                    f"Child device section '{section}' references unknown parent '{parent_name}'"
+                )
+
+            parent_config = self.config[self.root][parent_name]
+            if not parent_config.get('has_children', False):
+                raise InvalidConfigError(
+                    f"Parent device '{parent_name}' must have 'has_children = true' to define child devices"
+                )
+
+            # Initialize children array if not exists
+            if 'children' not in parent_config:
+                parent_config['children'] = {}
+
+            # Parse child device configuration
+            child_config = {'child_index': child_index}
+
+            # Process required and optional fields for child devices
+            for field, hint, required in self.CHILD_FIELDS:
+                if parser.has_option(section, field):
+                    try:
+                        child_config[field] = ConvertValue(
+                            parser.get(section, field),
+                            hint=hint
+                        )
+                    except ConversionFailure:
+                        raise InvalidConfigError(
+                            f"Invalid field '{field}' in child section '{section}' expected type '{hint}'"
+                        )
+                else:
+                    if required:
+                        raise InvalidConfigError(
+                            f"Child section '{section}' missing required field '{field}'"
+                        )
+                    child_config[field] = DefaultValue(hint)
+
+            # Parse any additional options
+            for option in parser.options(section):
+                if option in child_config:
+                    continue
+                try:
+                    child_config[option] = ConvertValue(parser.get(section, option))
+                except ConversionFailure:
+                    raise InvalidConfigError(
+                        f"Invalid field '{option}' in child section '{section}' unable to determine type"
+                    )
+
+            # Validate measurements exist
+            measurementMap = {}
+            for measurement in child_config['measurements']:
+                if measurement not in measurements:
+                    raise InvalidConfigError(
+                        f"Unknown measurement '{measurement}' in child section '{section}'"
+                    )
+                measurementMap[measurement] = measurements[measurement]
+            child_config['measurements'] = measurementMap
+
+            # Store child config indexed by child_index
+            parent_config['children'][child_index] = child_config
 
     @staticmethod
     def ParseOption(parser, section, option):

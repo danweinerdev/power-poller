@@ -98,6 +98,33 @@ class KasaDeviceWrapper:
         """Check if device has energy monitoring."""
         return self.device.has_emeter
 
+    @property
+    def has_children(self) -> bool:
+        """Check if device has child devices (e.g., smart power strip)."""
+        return hasattr(self.device, 'children') and len(self.device.children) > 0
+
+    @property
+    def children(self) -> list:
+        """Get list of child devices."""
+        if hasattr(self.device, 'children'):
+            return [KasaDeviceWrapper(child) for child in self.device.children]
+        return []
+
+    def get_child_by_index(self, index: int) -> Optional['KasaDeviceWrapper']:
+        """
+        Get child device by index.
+
+        :param index: Zero-based index of child device
+        :return: KasaDeviceWrapper for child or None if index invalid
+        """
+        if hasattr(self.device, 'get_plug_by_index'):
+            try:
+                child = self.device.get_plug_by_index(index)
+                return KasaDeviceWrapper(child)
+            except Exception:
+                return None
+        return None
+
     async def get_emeter_realtime(self) -> Optional[Dict[str, Any]]:
         """
         Get real-time energy meter data.
