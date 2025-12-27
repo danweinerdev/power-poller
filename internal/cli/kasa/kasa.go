@@ -2,6 +2,7 @@ package kasa
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -21,28 +22,56 @@ var KasaCmd = &cobra.Command{
 	Short: "KASA device control commands",
 	Long: `Control KASA smart devices directly.
 
-Use --host to specify the device IP address for all subcommands.`,
+Use --host to specify the device IP address for most subcommands.
+Some commands like 'discover' do not require --host.`,
 }
 
 func init() {
-	KasaCmd.PersistentFlags().StringVarP(&host, "host", "H", "", "device IP address (required)")
+	KasaCmd.PersistentFlags().StringVarP(&host, "host", "H", "", "device IP address")
 	KasaCmd.PersistentFlags().DurationVarP(&timeout, "timeout", "t", 5*time.Second, "connection timeout")
-	KasaCmd.MarkPersistentFlagRequired("host")
 
-	// Add subcommands
-	KasaCmd.AddCommand(infoCmd)
-	KasaCmd.AddCommand(stateCmd)
-	KasaCmd.AddCommand(onCmd)
-	KasaCmd.AddCommand(offCmd)
-	KasaCmd.AddCommand(toggleCmd)
-	KasaCmd.AddCommand(emeterCmd)
-	KasaCmd.AddCommand(brightnessCmd)
-	KasaCmd.AddCommand(hsvCmd)
-	KasaCmd.AddCommand(tempCmd)
-	KasaCmd.AddCommand(aliasCmd)
-	KasaCmd.AddCommand(rebootCmd)
-	KasaCmd.AddCommand(ledCmd)
-	KasaCmd.AddCommand(newTestCommand())
+	// Commands that require --host
+	hostRequiredCmds := []*cobra.Command{
+		infoCmd,
+		stateCmd,
+		onCmd,
+		offCmd,
+		toggleCmd,
+		emeterCmd,
+		brightnessCmd,
+		hsvCmd,
+		tempCmd,
+		aliasCmd,
+		rebootCmd,
+		ledCmd,
+		wifiCmd,
+		timeCmd,
+		sysinfoCmd,
+		scheduleCmd,
+	}
+
+	for _, cmd := range hostRequiredCmds {
+		KasaCmd.AddCommand(cmd)
+		// Mark host as required for this specific command
+		cmd.PreRunE = requireHost(cmd.PreRunE)
+	}
+
+	// Commands that don't require --host
+	KasaCmd.AddCommand(newTestCommand()) // test has its own host validation
+	KasaCmd.AddCommand(discoverCmd)      // discover uses broadcast, no host needed
+}
+
+// requireHost wraps a PreRunE to validate that --host is set.
+func requireHost(existing func(*cobra.Command, []string) error) func(*cobra.Command, []string) error {
+	return func(cmd *cobra.Command, args []string) error {
+		if host == "" {
+			return fmt.Errorf("required flag \"host\" not set")
+		}
+		if existing != nil {
+			return existing(cmd, args)
+		}
+		return nil
+	}
 }
 
 // loadDevice connects to a device and returns it.

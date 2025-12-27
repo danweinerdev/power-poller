@@ -47,7 +47,8 @@ type SysInfo struct {
 	DevName    string `json:"dev_name"`
 
 	// Network
-	RSSI int `json:"rssi"`
+	SSID string `json:"ssid"`
+	RSSI int    `json:"rssi"`
 
 	// Feature flags (colon-separated: "TIM:ENE")
 	Feature string `json:"feature"`
