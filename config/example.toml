@@ -1,0 +1,79 @@
+# KASA Monitor Configuration Example
+# Copy this file and adjust for your environment
+
+[global]
+poll_interval = "10s"     # How often to poll devices
+log_level = "info"        # debug, info, warn, error
+device_timeout = "5s"     # Timeout for device communication
+batch_size = 10           # Number of metrics to batch before sending
+retry_attempts = 3        # Number of retry attempts on failure
+retry_delay = "1s"        # Delay between retries
+
+[influxdb]
+enabled = true
+server = "localhost"
+port = 8086
+token = "your-influxdb-token"
+org = "myorg"
+bucket = "kasa"
+tls = false
+
+[prometheus]
+enabled = true
+port = 9090
+path = "/metrics"
+
+# Device definitions
+# Each device section is named [devices.<name>]
+
+[devices.office_plug]
+address = "192.168.1.100"
+measurements = ["power_metrics"]
+tags = { location = "office", room = "main" }
+
+[devices.bedroom_bulb]
+address = "192.168.1.101"
+measurements = ["power_metrics", "bulb_metrics"]
+tags = { location = "bedroom" }
+
+# Power strip with child outlets
+[devices.server_rack]
+address = "192.168.1.102"
+has_children = true
+poll_parent = true        # Also poll aggregate metrics for the strip
+measurements = ["power_metrics"]
+tags = { location = "server_room" }
+
+[devices.server_rack.children.outlet_0]
+index = 0
+name = "router"
+measurements = ["power_metrics"]
+tags = { device_type = "network" }
+
+[devices.server_rack.children.outlet_1]
+index = 1
+name = "switch"
+measurements = ["power_metrics"]
+tags = { device_type = "network" }
+
+[devices.server_rack.children.outlet_2]
+index = 2
+name = "nas"
+measurements = ["power_metrics"]
+tags = { device_type = "storage" }
+
+# Measurement definitions
+# Define field names and their types
+
+[measurements.power_metrics.fields]
+voltage = "float"
+current = "float"
+power = "float"
+total = "float"
+
+[measurements.bulb_metrics.fields]
+brightness = "int"
+hue = "int"
+saturation = "int"
+color_temp = "int"
+on_off = "bool"
