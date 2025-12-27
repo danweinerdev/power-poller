@@ -1,6 +1,27 @@
-__pycache__/
-*.py[cod]
+# Build output
+bin/
+dist/
+
+# Go
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+coverage.out
+coverage.html
+
+# IDE
 .vscode/
 .idea/
-.venv/
+
+# Misc
 tmp/
+*.log
+
+# Legacy Python (can be removed)
+__pycache__/
+*.py[cod]
+.venv/
