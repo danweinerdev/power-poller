@@ -4,117 +4,211 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-KASA Monitor is a unified Python 3 library and CLI tool for monitoring and controlling TP-Link KASA smart home devices (plugs, bulbs, light strips). The project supports device discovery, control, and monitoring with energy meter (emeter) data collection for InfluxDB integration.
+KASA Monitor is a Go CLI tool for monitoring and controlling TP-Link KASA smart home devices (plugs, bulbs, light strips, power strips). The project supports device discovery, control, and monitoring with energy meter (emeter) data collection for InfluxDB and Prometheus backends.
 
-This project combines what were previously two separate projects: PyMonitorLib (monitoring framework) and TPLink device library into a single cohesive package called `kasa_monitor`.
+## Build Commands
+
+```bash
+# Build the binary
+make build
+
+# Run all tests
+make test
+go test ./...
+
+# Run tests with verbose output
+make test-verbose
+
+# Run tests with coverage
+make test-coverage
+
+# Format code
+make fmt
+go fmt ./...
+
+# Lint code
+make lint
+go vet ./...
+
+# Clean build artifacts
+make clean
+
+# Build Docker image
+make docker-build
+```
 
 ## Code Structure
 
-The codebase is organized into a single unified package structure:
-
-### Package: `kasa_monitor/`
-
-#### 1. Core Module (`kasa_monitor/core/`)
-- **Executor Framework** (`executor.py`): Main daemon/service execution framework with:
-  - Daemonization support (double-fork on POSIX systems)
-  - Signal handling (SIGTERM/SIGINT for shutdown, SIGHUP for config reload)
-  - Interval-based polling with configurable callback
-  - PID file management
-- **Config System** (`config.py`): INI-based configuration with type coercion
-- **Metrics Pipeline** (`metrics.py`): Batches and sends metrics to InfluxDB
-- **Database** (`database.py`): InfluxDB client abstraction
-- **Daemon** (`daemon.py`): Process daemonization utilities
-- **Utils** (`utils.py`): System utilities (user/group management, file descriptors, etc.)
-
-#### 2. Devices Module (`kasa_monitor/devices/`)
-- **Device Protocol**: Custom encryption protocol using XOR cipher (key 0xAB) over TCP port 9999
-- **Device Hierarchy**: Base `Device` class with specialized subclasses:
-  - `Plug` - Smart plugs with relay control and optional emeter
-  - `Bulb` - Smart bulbs with color/brightness/temperature controls
-  - `LightStrip` - Light strips (extends Bulb with length parameter)
-- **Discovery** (`discovery.py`): Auto-detection of device types by querying `get_sysinfo`
-  - `LoadDevice(address)` - Load a single device
-  - `LoadDevices(addresses)` - Load multiple devices
-  - `GetDeviceType(info)` - Determine device type from sysinfo
-- **Emeter Handler** (`emeter.py`): Energy monitoring for supported devices
-- **Utils** (`utils.py`): Device utilities (IP/MAC validation, caching)
-
-#### 3. Commands Module (`kasa_monitor/commands/`)
-- **Poll** (`poll.py`) - Main polling loop that collects emeter data and sends to InfluxDB
-- **Status** (`status.py`) - Display device information, state, and emeter readings
-- **Interactive** (`interactive.py`) - REPL for device control (toggle, reboot, set alias, etc.)
-
-#### 4. CLI Entry Point (`kasa_monitor/__main__.py`)
-- Main entry point using the Executor framework with `Poll` as the default callback
-- Subcommands: `run`, `status`, `interactive`
+```
+kasa-monitor/
+├── cmd/
+│   └── kasa-monitor/
+│       └── main.go                 # CLI entry point
+├── internal/
+│   ├── cli/                        # Cobra CLI commands
+│   │   ├── root.go                 # Root command, global flags
+│   │   ├── poll.go                 # Poll subcommand (daemon mode)
+│   │   ├── status.go               # Status subcommand
+│   │   └── kasa/                   # Device control commands
+│   │       ├── kasa.go             # Kasa command group
+│   │       ├── info.go             # info/state/on/off/toggle
+│   │       ├── emeter.go           # Energy meter commands
+│   │       ├── bulb.go             # brightness/hsv/temperature
+│   │       └── device.go           # alias/reboot/led
+│   ├── config/                     # TOML configuration
+│   │   ├── config.go               # Config loading
+│   │   ├── types.go                # Config structs
+│   │   └── validation.go           # Config validation
+│   ├── poller/                     # Polling system
+│   │   ├── poller.go               # Main polling loop
+│   │   └── worker.go               # Concurrent device polling
+│   ├── metrics/                    # Metrics system
+│   │   ├── metric.go               # Metric type
+│   │   ├── pipeline.go             # Batching and queuing
+│   │   └── collector.go            # Prometheus collector
+│   ├── backend/                    # Storage backends
+│   │   ├── backend.go              # Backend interface
+│   │   ├── influxdb.go             # InfluxDB 2.x
+│   │   ├── prometheus.go           # Prometheus exporter
+│   │   └── echo.go                 # Debug output
+│   └── daemon/                     # Daemon utilities
+│       ├── daemon.go               # PID file management
+│       └── signals.go              # Signal handling
+├── pkg/
+│   ├── kasa/                       # Public device library
+│   │   ├── protocol/
+│   │   │   ├── encrypt.go          # XOR cipher
+│   │   │   ├── message.go          # Message framing
+│   │   │   └── transport.go        # TCP communication
+│   │   ├── device/
+│   │   │   ├── device.go           # Device interface
+│   │   │   ├── plug.go             # Smart plug
+│   │   │   ├── bulb.go             # Smart bulb
+│   │   │   ├── lightstrip.go       # Light strip
+│   │   │   ├── powerstrip.go       # Power strip with children
+│   │   │   ├── discovery.go        # Device type detection
+│   │   │   └── errors.go           # Error definitions
+│   │   ├── command/
+│   │   │   ├── command.go          # Command builders base
+│   │   │   ├── system.go           # System commands
+│   │   │   ├── emeter.go           # Energy meter commands
+│   │   │   └── lighting.go         # Bulb lighting commands
+│   │   └── types/
+│   │       ├── sysinfo.go          # SysInfo types
+│   │       ├── emeter.go           # Emeter types
+│   │       └── lighting.go         # Light state types
+│   └── mockdevice/                 # Mock device for testing
+│       ├── device.go               # TCP server mock
+│       └── options.go              # Configuration options
+├── config/
+│   └── example.toml                # Example configuration
+└── go.mod
+```
 
 ## Key Architecture Patterns
 
+### Device Protocol
+- XOR cipher with rolling key (initial key 0xAB)
+- 4-byte big-endian length header + encrypted JSON payload
+- TCP port 9999 (default), configurable timeout
+
 ### Device Communication Flow
-1. Device discovery via `LoadDevice(address)` creates base Device, queries sysinfo
-2. `GetDeviceType()` examines sysinfo to determine device class (Plug/Bulb/LightStrip)
-3. Appropriate subclass instantiated with cached sysinfo
-4. All commands use `QueryHelper()` to build JSON payload, `Send()` to encrypt/transmit
-5. Responses decrypted and cached in device's `Cache` object
+1. `device.Load(ctx, address)` creates appropriate device type based on sysinfo
+2. Device connects and calls `Update()` to fetch current state
+3. Commands are sent via `SendCommand()` which handles encryption/framing
+4. Responses are decrypted and parsed
 
 ### Polling Architecture
-The `Poll` command iterates through configured devices, calling:
-1. `LoadDevice()` to create device instance
-2. `device.GetEmeter().GetRealtime()` to fetch current power data
-3. `Metric()` creation with configured tags/measurements
-4. `pipeline(metric)` to queue for batch upload
-5. `pipeline.Flush()` sends batched metrics to InfluxDB
+The `poll` command runs a polling loop that:
+1. Creates a `Worker` which polls all configured devices concurrently
+2. Each device poll fetches emeter data and creates `Metric` objects
+3. Metrics are pushed to the `Pipeline` which batches and sends to backends
+4. Signal handling: SIGINT/SIGTERM for shutdown, SIGHUP for config reload
 
-### Configuration Requirements
-- Config file uses INI format with `[global]`, `[influxdb]`, device sections, and measurement sections
-- Device sections must have `address` and `measurements` fields
-- Measurement sections define field names and their types (float, int, string, bool)
-- See `config/example.conf` for reference
+### Configuration (TOML)
+```toml
+[global]
+poll_interval = "10s"
+log_level = "info"
+device_timeout = "5s"
 
-## Development Commands
+[influxdb]
+enabled = true
+server = "localhost"
+port = 8086
+token = "..."
+org = "myorg"
+bucket = "kasa"
 
-### Running the CLI
+[prometheus]
+enabled = true
+port = 9090
+path = "/metrics"
 
-The application can be run as a Python module. Import paths use the unified package structure:
-- `from kasa_monitor.devices import Bulb, Plug, LightStrip, Device, LoadDevice, LoadDevices`
-- `from kasa_monitor.core import Execute, Config, Metric`
-- `from kasa_monitor.commands import Poll, Status, Interactive`
+[devices.office_plug]
+address = "192.168.1.100"
+measurements = ["power_metrics"]
+tags = { location = "office" }
 
-### Docker Container
+[devices.power_strip]
+address = "192.168.1.101"
+has_children = true
+poll_parent = true
+
+[devices.power_strip.children.outlet_0]
+index = 0
+name = "server"
+measurements = ["power_metrics"]
+
+[measurements.power_metrics.fields]
+voltage = "float"
+current = "float"
+power = "float"
+total = "float"
+```
+
+## CLI Commands
+
+```bash
+# Run polling daemon
+kasa-monitor poll -c config.toml
+
+# Run in foreground with echo output (debug)
+kasa-monitor poll -o --echo -c config.toml
+
+# Check device status
+kasa-monitor status -d 192.168.1.100
+
+# Device control
+kasa-monitor kasa -H 192.168.1.100 info
+kasa-monitor kasa -H 192.168.1.100 on
+kasa-monitor kasa -H 192.168.1.100 off
+kasa-monitor kasa -H 192.168.1.100 toggle
+kasa-monitor kasa -H 192.168.1.100 emeter
+
+# Bulb control
+kasa-monitor kasa -H 192.168.1.101 brightness 75
+kasa-monitor kasa -H 192.168.1.101 hsv 180 50 80
+kasa-monitor kasa -H 192.168.1.101 temperature 3000
+```
+
+## Dependencies
+
+- github.com/spf13/cobra (CLI)
+- github.com/BurntSushi/toml (config)
+- github.com/influxdata/influxdb-client-go/v2
+- github.com/prometheus/client_golang
+- log/slog (standard library - structured logging)
+
+## Docker Usage
+
 ```bash
 # Build container
 docker build -f Containerfile -t kasa-monitor:latest .
 
 # Run in polling mode with config
-docker run -it -v $PWD/config/example.conf:/etc/monitor.conf:ro kasa-monitor:latest
+docker run -it -v $PWD/config/example.toml:/etc/kasa-monitor/config.toml:ro kasa-monitor:latest
 
-# Interactive mode
-docker run -it kasa-monitor:latest interactive --device 10.0.0.100
-
-# Status check
-docker run -it kasa-monitor:latest status --device 10.0.0.100
+# Device status check
+docker run -it kasa-monitor:latest status -d 10.0.0.100
 ```
-
-### Common Operations
-```bash
-# Run as Python module (recommended)
-python -m kasa_monitor status --device 10.0.0.100
-python -m kasa_monitor interactive --device 10.0.0.100 --device 10.0.0.101
-python -m kasa_monitor run -o --loglevel=INFO /path/to/config.conf
-
-# Run in foreground with debug logging
-python -m kasa_monitor run -o --loglevel=DEBUG --debug /path/to/config.conf
-```
-
-## Dependencies
-
-All dependencies are now self-contained in the `kasa_monitor` package. No external PyMonitorLib dependency. Main dependencies: influxdb-client, requests, reactivex.
-
-## Notes
-
-- This is a unified refactoring of PyMonitorLib and the TPLink library into a single package
-- Device protocol is proprietary TP-Link encryption; no authentication/TLS
-- Emeter support varies by device model - check `HasEmeter()` before accessing
-- Color bulb models have different temperature ranges (e.g., LB130: 2500-9000K)
-- Windows support exists but daemonization features are POSIX-only
-- The old `lib/monitor/` and `lib/tplink/` directories can be removed after migration
