@@ -1,40 +1,20 @@
-# Makefile for KASA Monitor
+# Makefile for KASA Monitor (Go)
 # Copyright 2019-2024 Daniel Weiner
 
-.PHONY: help venv install install-dev test test-verbose test-coverage test-fast clean build dist upload check format lint all
+.PHONY: help build test test-verbose test-coverage clean install lint docker-build docker-run docker-stop all
 
 # Default target
 .DEFAULT_GOAL := help
 
 # Package information
 PACKAGE_NAME = kasa-monitor
+BINARY = kasa-monitor
+MODULE = github.com/danweinerdev/go-power-poller
 
-# Detect virtual environment
-ifeq ($(OS),Windows_NT)
-    VENV_BIN = .venv/Scripts
-    PYTHON = $(VENV_BIN)/python.exe
-else
-    VENV_BIN = .venv/bin
-    PYTHON = $(VENV_BIN)/python
-endif
-
-# Check if venv exists, otherwise use system python
-ifeq ($(wildcard $(PYTHON)),)
-    PYTHON = python
-endif
-
-PIP = $(PYTHON) -m pip
-PYTEST = $(PYTHON) -m pytest
-BUILD = $(PYTHON) -m build
-
-# Directories
-SRC_DIR = kasa_monitor
-TEST_DIR = tests
-DIST_DIR = dist
-BUILD_DIR = build
-EGG_DIR = *.egg-info
-COVERAGE_DIR = htmlcov
-CACHE_DIRS = .pytest_cache __pycache__
+# Build settings
+GO = go
+BUILD_DIR = bin
+LDFLAGS = -ldflags="-s -w"
 
 # Colors for output
 COLOR_RESET = \033[0m
@@ -46,172 +26,93 @@ COLOR_BLUE = \033[34m
 ##@ Help
 
 help: ## Display this help message
-	@echo "$(COLOR_BOLD)KASA Monitor - Build System$(COLOR_RESET)"
+	@echo "$(COLOR_BOLD)KASA Monitor (Go) - Build System$(COLOR_RESET)"
 	@echo ""
 	@awk 'BEGIN {FS = ":.*##"; printf "Usage:\n  make $(COLOR_BLUE)<target>$(COLOR_RESET)\n"} \
 		/^[a-zA-Z_-]+:.*?##/ { printf "  $(COLOR_BLUE)%-20s$(COLOR_RESET) %s\n", $$1, $$2 } \
 		/^##@/ { printf "\n$(COLOR_BOLD)%s$(COLOR_RESET)\n", substr($$0, 5) } ' $(MAKEFILE_LIST)
 
-##@ Installation
+##@ Building
 
-venv: ## Create virtual environment
-	@if [ ! -d ".venv" ]; then \
-		echo "$(COLOR_GREEN)Creating virtual environment...$(COLOR_RESET)"; \
-		python -m venv .venv; \
-		echo "$(COLOR_GREEN)Virtual environment created in .venv/$(COLOR_RESET)"; \
-		echo ""; \
-		echo "$(COLOR_BOLD)Activate with:$(COLOR_RESET)"; \
-		if [ "$(OS)" = "Windows_NT" ]; then \
-			echo "  .venv\\Scripts\\activate"; \
-		else \
-			echo "  source .venv/bin/activate"; \
-		fi; \
-	else \
-		echo "$(COLOR_YELLOW)Virtual environment already exists$(COLOR_RESET)"; \
-	fi
+build: ## Build the binary
+	@echo "$(COLOR_GREEN)Building $(BINARY)...$(COLOR_RESET)"
+	$(GO) build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY) ./cmd/kasa-monitor
+	@echo "$(COLOR_GREEN)Binary built: $(BUILD_DIR)/$(BINARY)$(COLOR_RESET)"
 
-install: venv ## Install package and runtime dependencies
-	@echo "$(COLOR_GREEN)Installing runtime dependencies...$(COLOR_RESET)"
-	$(PIP) install -r requirements.txt
-	@echo "$(COLOR_GREEN)Installing package...$(COLOR_RESET)"
-	$(PIP) install -e .
-	@echo "$(COLOR_GREEN)Installation complete!$(COLOR_RESET)"
+build-linux: ## Build for Linux (static)
+	@echo "$(COLOR_GREEN)Building $(BINARY) for Linux...$(COLOR_RESET)"
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO) build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY)-linux-amd64 ./cmd/kasa-monitor
 
-install-dev: venv ## Install package with development dependencies
-	@echo "$(COLOR_GREEN)Installing runtime dependencies...$(COLOR_RESET)"
-	$(PIP) install -r requirements.txt
-	@echo "$(COLOR_GREEN)Installing test dependencies...$(COLOR_RESET)"
-	$(PIP) install -r requirements-test.txt
-	@echo "$(COLOR_GREEN)Installing package in editable mode...$(COLOR_RESET)"
-	$(PIP) install -e ".[dev]"
-	@echo "$(COLOR_GREEN)Development environment ready!$(COLOR_RESET)"
+build-darwin: ## Build for macOS
+	@echo "$(COLOR_GREEN)Building $(BINARY) for macOS...$(COLOR_RESET)"
+	CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 $(GO) build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY)-darwin-amd64 ./cmd/kasa-monitor
+	CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 $(GO) build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY)-darwin-arm64 ./cmd/kasa-monitor
+
+build-windows: ## Build for Windows
+	@echo "$(COLOR_GREEN)Building $(BINARY) for Windows...$(COLOR_RESET)"
+	CGO_ENABLED=0 GOOS=windows GOARCH=amd64 $(GO) build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY)-windows-amd64.exe ./cmd/kasa-monitor
+
+build-all: build-linux build-darwin build-windows ## Build for all platforms
+	@echo "$(COLOR_GREEN)All platforms built!$(COLOR_RESET)"
+
+install: ## Install the binary to GOPATH/bin
+	@echo "$(COLOR_GREEN)Installing $(BINARY)...$(COLOR_RESET)"
+	$(GO) install $(LDFLAGS) ./cmd/kasa-monitor
+	@echo "$(COLOR_GREEN)Installed!$(COLOR_RESET)"
 
 ##@ Testing
 
 test: ## Run all tests
 	@echo "$(COLOR_YELLOW)Running tests...$(COLOR_RESET)"
-	@$(PYTHON) -c "import pytest" 2>/dev/null || (echo "$(COLOR_YELLOW)pytest not installed. Run 'make install-dev' first.$(COLOR_RESET)" && exit 1)
-	$(PYTEST)
+	$(GO) test ./...
 
 test-verbose: ## Run tests with verbose output
 	@echo "$(COLOR_YELLOW)Running tests (verbose)...$(COLOR_RESET)"
-	$(PYTEST) -v -s
+	$(GO) test -v ./...
 
 test-coverage: ## Run tests with coverage report
 	@echo "$(COLOR_YELLOW)Running tests with coverage...$(COLOR_RESET)"
-	$(PYTEST) --cov=$(SRC_DIR) --cov-report=term-missing --cov-report=html
-	@echo "$(COLOR_GREEN)Coverage report generated in $(COVERAGE_DIR)/index.html$(COLOR_RESET)"
+	$(GO) test -coverprofile=coverage.out ./...
+	$(GO) tool cover -html=coverage.out -o coverage.html
+	@echo "$(COLOR_GREEN)Coverage report: coverage.html$(COLOR_RESET)"
 
-test-fast: ## Run tests without coverage (faster)
-	@echo "$(COLOR_YELLOW)Running tests (fast mode)...$(COLOR_RESET)"
-	$(PYTEST) --tb=short -q
+test-race: ## Run tests with race detector
+	@echo "$(COLOR_YELLOW)Running tests with race detector...$(COLOR_RESET)"
+	$(GO) test -race ./...
 
-test-unit: ## Run only unit tests
-	@echo "$(COLOR_YELLOW)Running unit tests...$(COLOR_RESET)"
-	$(PYTEST) -m unit
-
-test-integration: ## Run only integration tests
-	@echo "$(COLOR_YELLOW)Running integration tests...$(COLOR_RESET)"
-	$(PYTEST) -m integration
-
-test-watch: ## Run tests in watch mode (requires pytest-watch)
-	@echo "$(COLOR_YELLOW)Running tests in watch mode...$(COLOR_RESET)"
-	$(PYTHON) -m pytest_watch
+bench: ## Run benchmarks
+	@echo "$(COLOR_YELLOW)Running benchmarks...$(COLOR_RESET)"
+	$(GO) test -bench=. -benchmem ./...
 
 ##@ Code Quality
 
-check: test lint ## Run all checks (tests + linting)
-
-lint: ## Run linting checks (requires ruff or flake8)
+lint: ## Run linting (requires golangci-lint)
 	@echo "$(COLOR_YELLOW)Running linting checks...$(COLOR_RESET)"
-	@if command -v ruff >/dev/null 2>&1; then \
-		echo "Running ruff..."; \
-		ruff check $(SRC_DIR); \
-	elif command -v flake8 >/dev/null 2>&1; then \
-		echo "Running flake8..."; \
-		flake8 $(SRC_DIR); \
+	@if command -v golangci-lint >/dev/null 2>&1; then \
+		golangci-lint run; \
 	else \
-		echo "$(COLOR_YELLOW)No linter found. Install ruff or flake8.$(COLOR_RESET)"; \
+		echo "$(COLOR_YELLOW)golangci-lint not found. Running go vet instead...$(COLOR_RESET)"; \
+		$(GO) vet ./...; \
 	fi
 
-format: ## Format code (requires black or ruff)
+fmt: ## Format code
 	@echo "$(COLOR_YELLOW)Formatting code...$(COLOR_RESET)"
-	@if command -v ruff >/dev/null 2>&1; then \
-		echo "Running ruff format..."; \
-		ruff format $(SRC_DIR) $(TEST_DIR); \
-	elif command -v black >/dev/null 2>&1; then \
-		echo "Running black..."; \
-		black $(SRC_DIR) $(TEST_DIR); \
-	else \
-		echo "$(COLOR_YELLOW)No formatter found. Install ruff or black.$(COLOR_RESET)"; \
-	fi
+	$(GO) fmt ./...
+	@echo "$(COLOR_GREEN)Formatting complete!$(COLOR_RESET)"
 
-type-check: ## Run type checking (requires mypy)
-	@echo "$(COLOR_YELLOW)Running type checks...$(COLOR_RESET)"
-	@if command -v mypy >/dev/null 2>&1; then \
-		mypy $(SRC_DIR); \
-	else \
-		echo "$(COLOR_YELLOW)mypy not found. Install with: pip install mypy$(COLOR_RESET)"; \
-	fi
+vet: ## Run go vet
+	@echo "$(COLOR_YELLOW)Running go vet...$(COLOR_RESET)"
+	$(GO) vet ./...
 
-##@ Building
-
-build: clean ## Build distribution packages (wheel and sdist)
-	@echo "$(COLOR_GREEN)Building distribution packages...$(COLOR_RESET)"
-	$(BUILD)
-	@echo "$(COLOR_GREEN)Build complete! Packages in $(DIST_DIR)/$(COLOR_RESET)"
-	@ls -lh $(DIST_DIR)/
-
-dist: build ## Alias for build
-
-wheel: clean ## Build wheel package only
-	@echo "$(COLOR_GREEN)Building wheel package...$(COLOR_RESET)"
-	$(BUILD) --wheel
-	@echo "$(COLOR_GREEN)Wheel built in $(DIST_DIR)/$(COLOR_RESET)"
-
-sdist: clean ## Build source distribution only
-	@echo "$(COLOR_GREEN)Building source distribution...$(COLOR_RESET)"
-	$(BUILD) --sdist
-	@echo "$(COLOR_GREEN)Source distribution built in $(DIST_DIR)/$(COLOR_RESET)"
-
-##@ Publishing
-
-upload: build ## Upload package to PyPI (requires twine)
-	@echo "$(COLOR_YELLOW)Uploading to PyPI...$(COLOR_RESET)"
-	@if command -v twine >/dev/null 2>&1; then \
-		twine upload $(DIST_DIR)/*; \
-		echo "$(COLOR_GREEN)Upload complete!$(COLOR_RESET)"; \
-	else \
-		echo "$(COLOR_YELLOW)twine not found. Install with: pip install twine$(COLOR_RESET)"; \
-		exit 1; \
-	fi
-
-upload-test: build ## Upload package to TestPyPI
-	@echo "$(COLOR_YELLOW)Uploading to TestPyPI...$(COLOR_RESET)"
-	@if command -v twine >/dev/null 2>&1; then \
-		twine upload --repository testpypi $(DIST_DIR)/*; \
-		echo "$(COLOR_GREEN)Upload to TestPyPI complete!$(COLOR_RESET)"; \
-	else \
-		echo "$(COLOR_YELLOW)twine not found. Install with: pip install twine$(COLOR_RESET)"; \
-		exit 1; \
-	fi
+check: test lint ## Run all checks (tests + linting)
 
 ##@ Cleaning
 
-clean: ## Clean build artifacts and caches
+clean: ## Clean build artifacts
 	@echo "$(COLOR_YELLOW)Cleaning build artifacts...$(COLOR_RESET)"
-	rm -rf $(BUILD_DIR) $(DIST_DIR) $(EGG_DIR)
-	find . -type d -name "$(CACHE_DIRS)" -exec rm -rf {} + 2>/dev/null || true
-	find . -type f -name "*.pyc" -delete
-	find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
-	rm -rf $(COVERAGE_DIR) .coverage
+	rm -rf $(BUILD_DIR) coverage.out coverage.html
+	$(GO) clean
 	@echo "$(COLOR_GREEN)Clean complete!$(COLOR_RESET)"
-
-clean-all: clean ## Clean everything including test cache and virtual environments
-	@echo "$(COLOR_YELLOW)Deep cleaning...$(COLOR_RESET)"
-	rm -rf .tox .mypy_cache .ruff_cache .venv
-	find . -type d -name "*.egg-info" -exec rm -rf {} + 2>/dev/null || true
-	@echo "$(COLOR_GREEN)Deep clean complete!$(COLOR_RESET)"
 
 ##@ Docker
 
@@ -223,7 +124,7 @@ docker-build: ## Build Docker image
 docker-run: ## Run Docker container
 	@echo "$(COLOR_GREEN)Running Docker container...$(COLOR_RESET)"
 	docker run -d \
-		-v $$(pwd)/config/monitor.conf:/etc/monitor.conf:ro \
+		-v $$(pwd)/config/example.toml:/etc/kasa-monitor/config.toml:ro \
 		--name kasa-monitor \
 		kasa-monitor:latest
 
@@ -232,46 +133,41 @@ docker-stop: ## Stop Docker container
 	docker stop kasa-monitor
 	docker rm kasa-monitor
 
+##@ Dependencies
+
+deps: ## Download dependencies
+	@echo "$(COLOR_GREEN)Downloading dependencies...$(COLOR_RESET)"
+	$(GO) mod download
+
+deps-tidy: ## Tidy dependencies
+	@echo "$(COLOR_GREEN)Tidying dependencies...$(COLOR_RESET)"
+	$(GO) mod tidy
+
+deps-upgrade: ## Upgrade all dependencies
+	@echo "$(COLOR_GREEN)Upgrading dependencies...$(COLOR_RESET)"
+	$(GO) get -u ./...
+	$(GO) mod tidy
+
 ##@ Development
 
-dev-setup: clean install-dev ## Complete development setup
-	@echo "$(COLOR_GREEN)Development environment is ready!$(COLOR_RESET)"
-	@echo ""
-	@echo "$(COLOR_BOLD)Next steps:$(COLOR_RESET)"
-	@echo "  1. Run tests: make test"
-	@echo "  2. Check coverage: make test-coverage"
-	@echo "  3. Build package: make build"
+run: build ## Build and run the poller with echo mode
+	@echo "$(COLOR_GREEN)Running with echo mode...$(COLOR_RESET)"
+	./$(BUILD_DIR)/$(BINARY) poll --echo -c config/example.toml
 
-run-echo: ## Run with echo-metrics for testing (requires config)
-	@if [ -f config/monitor.conf ]; then \
-		$(PYTHON) -m kasa_monitor --echo-metrics --run-once -o config/monitor.conf; \
+status: build ## Build and run status command
+	@if [ -z "$(DEVICE)" ]; then \
+		echo "$(COLOR_YELLOW)Usage: make status DEVICE=192.168.1.100$(COLOR_RESET)"; \
 	else \
-		echo "$(COLOR_YELLOW)config/monitor.conf not found$(COLOR_RESET)"; \
-		exit 1; \
+		./$(BUILD_DIR)/$(BINARY) status -d $(DEVICE); \
 	fi
 
-version: ## Show package version
-	@echo "$(COLOR_BOLD)KASA Monitor$(COLOR_RESET)"
-	@$(PYTHON) -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])" 2>/dev/null || grep 'version = ' pyproject.toml | sed 's/.*"\(.*\)".*/\1/'
-
-info: ## Show project information
-	@echo "$(COLOR_BOLD)KASA Monitor - Project Information$(COLOR_RESET)"
-	@echo ""
-	@echo "$(COLOR_BOLD)Package:$(COLOR_RESET)     $(PACKAGE_NAME)"
-	@echo "$(COLOR_BOLD)Version:$(COLOR_RESET)     2.0.0"
-	@echo "$(COLOR_BOLD)Python:$(COLOR_RESET)      $(PYTHON)"
-	@echo "$(COLOR_BOLD)Source:$(COLOR_RESET)      $(SRC_DIR)/"
-	@echo "$(COLOR_BOLD)Tests:$(COLOR_RESET)       $(TEST_DIR)/"
-	@echo ""
-	@echo "$(COLOR_BOLD)Main dependencies:$(COLOR_RESET)"
-	@echo "  - python-kasa>=0.10.2"
-	@echo "  - influxdb-client>=1.36.0"
-	@echo "  - requests>=2.31.0"
+version: build ## Show version
+	./$(BUILD_DIR)/$(BINARY) version
 
 ##@ CI/CD
 
-ci: clean install-dev test-coverage lint ## Run CI pipeline (install, test, lint)
+ci: deps test lint ## Run CI pipeline
 	@echo "$(COLOR_GREEN)CI pipeline complete!$(COLOR_RESET)"
 
-all: clean install-dev test-coverage build ## Run full pipeline (clean, install, test, build)
+all: clean deps test build ## Run full pipeline (clean, deps, test, build)
 	@echo "$(COLOR_GREEN)Full pipeline complete!$(COLOR_RESET)"
