@@ -1,16 +1,14 @@
 # KASA Monitor
 
-A unified Python 3 library and CLI tool for monitoring and controlling TP-Link KASA smart home devices.
+A Go CLI tool for monitoring and controlling TP-Link KASA smart home devices.
 
 ## Features
 
-- **Device Support**: Smart plugs, bulbs, and light strips
-- **Real-time Monitoring**: Energy meter (emeter) data collection
-- **InfluxDB Integration**: Automatic metrics export for Grafana dashboards
-- **Multiple Interfaces**:
-  - Daemon mode for continuous monitoring
-  - Interactive REPL for device control
-  - Status command for one-time queries
+- **Device Support**: Smart plugs, bulbs, light strips, and power strips with individual outlet control
+- **Real-time Monitoring**: Energy meter (emeter) data collection with configurable polling
+- **Multiple Backends**: InfluxDB 2.x and Prometheus metrics export
+- **Device Control**: Full control via CLI (on/off, brightness, color, temperature)
+- **Concurrent Polling**: Efficient parallel device polling with batched metric delivery
 - **Docker Support**: Run as a containerized service
 
 ## Quick Start
@@ -20,180 +18,167 @@ A unified Python 3 library and CLI tool for monitoring and controlling TP-Link K
 ```bash
 # Clone the repository
 git clone <repository-url>
-cd tplink-smart-devices
+cd kasa-monitor
 
-# Quick install using Make
-make install
+# Build the binary
+make build
 
-# Or install manually
-pip install -r requirements.txt
-```
-
-For development:
-
-```bash
-# Install with development dependencies
-make install-dev
-
-# Or manually
-pip install -r requirements.txt -r requirements-test.txt
-pip install -e ".[dev]"
+# Or build directly with Go
+go build -o kasa-monitor ./cmd/kasa-monitor
 ```
 
 ### Basic Usage
 
 ```bash
 # Check device status
-python -m kasa_monitor status --device 192.168.1.100
+kasa-monitor status -d 192.168.1.100
 
-# Interactive mode
-python -m kasa_monitor interactive --device 192.168.1.100
+# Device control
+kasa-monitor kasa -H 192.168.1.100 info
+kasa-monitor kasa -H 192.168.1.100 on
+kasa-monitor kasa -H 192.168.1.100 off
+kasa-monitor kasa -H 192.168.1.100 toggle
 
-# Run continuous monitoring (requires config file)
-python -m kasa_monitor run /path/to/config.conf
+# Energy meter readings
+kasa-monitor kasa -H 192.168.1.100 emeter
+
+# Bulb control
+kasa-monitor kasa -H 192.168.1.100 brightness 75
+kasa-monitor kasa -H 192.168.1.100 hsv 180 50 80
+kasa-monitor kasa -H 192.168.1.100 temperature 3000
+
+# Discover devices on the network
+kasa-monitor kasa discover
+
+# Run continuous monitoring
+kasa-monitor poll -c config.toml
 ```
 
 ## Configuration
 
-Create a configuration file for continuous monitoring. See `config/example.conf` for a template:
+Create a TOML configuration file for continuous monitoring. See `config/example.toml` for a complete template:
 
-```ini
+```toml
 [global]
-database = influxdb
-devices = plug1
+poll_interval = "10s"
+log_level = "info"
+device_timeout = "5s"
+batch_size = 10
+retry_attempts = 3
+retry_delay = "1s"
 
 [influxdb]
-server = 127.0.0.1
+enabled = true
+server = "localhost"
 port = 8086
-ssl = True
-verify = True
-org = myorg
-token = mytoken
-bucket = kasa-monitor
+token = "your-influxdb-token"
+org = "myorg"
+bucket = "kasa"
+tls = false
 
-[plug1]
-address = 192.168.1.100
-device = plug1
-measurements = emeter
-tags = location=office
+[prometheus]
+enabled = true
+port = 9090
+path = "/metrics"
 
-[emeter]
-current = float
-voltage = float
-power = float
-total = float
+[devices.office_plug]
+address = "192.168.1.100"
+measurements = ["power_metrics"]
+tags = { location = "office" }
+
+[measurements.power_metrics.fields]
+voltage = "float"
+current = "float"
+power = "float"
+total = "float"
 ```
 
-**Note**: When using `--echo-metrics`, the `[global] database` field and database-specific sections (like `[influxdb]`) are optional and can be omitted.
+### Power Strips with Child Outlets
 
-### Child Devices (Smart Power Strips)
+KASA Monitor supports power strips with individual outlet monitoring:
 
-KASA Monitor supports devices with individual child outlets, such as smart power strips. Each outlet can be monitored separately with its own metrics and tags.
+```toml
+[devices.server_rack]
+address = "192.168.1.102"
+has_children = true
+poll_parent = true
+measurements = ["power_metrics"]
+tags = { location = "server_room" }
 
-See [config/powerstrip-example.conf](config/powerstrip-example.conf) for a complete example.
+[devices.server_rack.children.outlet_0]
+index = 0
+name = "router"
+measurements = ["power_metrics"]
+tags = { device_type = "network" }
 
-**Key Configuration:**
-
-```ini
-[global]
-database = influxdb
-devices = office_powerstrip
-
-[influxdb]
-server = 127.0.0.1
-port = 8086
-database = smart-home
-
-; Parent device (the power strip itself)
-[office_powerstrip]
-address = 10.0.0.100
-has_children = true          ; Mark device as having children
-poll_parent = true           ; Optional: also collect parent aggregate metrics
-measurements = power-metrics
-tags = location=office type=strip
-
-; Child devices (individual outlets)
-; Format: [parent_name.child_N] where N is zero-based index
-
-[office_powerstrip.child_0]
-device = desk_lamp           ; Friendly name for metrics
-measurements = power-metrics
-tags = outlet=0 appliance=lamp
-
-[office_powerstrip.child_1]
-device = monitor
-measurements = power-metrics
-tags = outlet=1 appliance=monitor
-
-[office_powerstrip.child_2]
-device = laptop_charger
-measurements = power-metrics
-tags = outlet=2 appliance=charger
-
-[power-metrics]
-fields = current:float voltage:float power:float total:float
-```
-
-**Resulting Metrics:**
-
-With this configuration, you'll get separate metrics for:
-- **Parent device** (if `poll_parent = true`): Tagged with `parent=true`
-- **Each child outlet**: Tagged with `parent=<parent_name>` and `child_index=<N>`
-
-Example InfluxDB line protocol output:
-
-```
-power-metrics,device=office_powerstrip,location=office,type=strip,parent=true current=1.2,voltage=120.0,power=144.0,total=5.2
-power-metrics,device=desk_lamp,location=office,type=strip,parent=office_powerstrip,child_index=0,outlet=0,appliance=lamp current=0.1,voltage=120.0,power=12.0,total=0.5
-power-metrics,device=monitor,location=office,type=strip,parent=office_powerstrip,child_index=1,outlet=1,appliance=monitor current=0.3,voltage=120.0,power=36.0,total=1.2
-power-metrics,device=laptop_charger,location=office,type=strip,parent=office_powerstrip,child_index=2,outlet=2,appliance=charger current=0.8,voltage=120.0,power=96.0,total=3.5
-```
-
-**Querying Child Devices:**
-
-```flux
-// Total power for all outlets on a strip
-from(bucket: "smart-home")
-  |> range(start: -1h)
-  |> filter(fn: (r) => r.parent == "office_powerstrip")
-  |> filter(fn: (r) => r._field == "power")
-  |> sum()
-
-// Individual outlet
-from(bucket: "smart-home")
-  |> range(start: -1h)
-  |> filter(fn: (r) => r.device == "desk_lamp")
-  |> filter(fn: (r) => r._field == "power")
+[devices.server_rack.children.outlet_1]
+index = 1
+name = "switch"
+measurements = ["power_metrics"]
+tags = { device_type = "network" }
 ```
 
 ## Command Reference
 
-### Run (Daemon Mode)
+### Poll (Daemon Mode)
 
-Continuously poll devices concurrently and send metrics to InfluxDB:
+Continuously poll devices and send metrics to configured backends:
 
 ```bash
-# Run in foreground with logging to stdout
-python -m kasa_monitor -o --loglevel=INFO /etc/monitor.conf
+# Run in foreground
+kasa-monitor poll -c config.toml
 
-# Run as daemon (POSIX only)
-python -m kasa_monitor -d --pidfile=/var/run/kasa-monitor.pid /etc/monitor.conf
+# Run in foreground with echo output (debug)
+kasa-monitor poll -o --echo -c config.toml
 
-# Debug mode
-python -m kasa_monitor -o --loglevel=DEBUG --debug /etc/monitor.conf
-
-# Poll once and exit (no continuous monitoring)
-python -m kasa_monitor --run-once -o --loglevel=INFO /etc/monitor.conf
-
-# Echo metrics to stdout (no database required)
-python -m kasa_monitor --echo-metrics --run-once -o /etc/monitor.conf
+# Run with debug logging
+kasa-monitor poll -c config.toml -l debug
 ```
 
-**Note**: Device polling uses asyncio for concurrent operations, dramatically improving performance when monitoring multiple devices.
+### Status
 
-**Options**:
-- `--run-once`: Poll all devices one time and exit. Useful for testing or running via cron/scheduled tasks.
-- `--echo-metrics`: Print metrics to stdout in InfluxDB line protocol format instead of sending to database. Database configuration becomes optional with this flag.
+Check device status:
+
+```bash
+kasa-monitor status -d 192.168.1.100
+```
+
+### Device Control
+
+The `kasa` subcommand provides full device control:
+
+```bash
+# Device information
+kasa-monitor kasa -H 192.168.1.100 info
+kasa-monitor kasa -H 192.168.1.100 sysinfo
+kasa-monitor kasa -H 192.168.1.100 state
+
+# Power control
+kasa-monitor kasa -H 192.168.1.100 on
+kasa-monitor kasa -H 192.168.1.100 off
+kasa-monitor kasa -H 192.168.1.100 toggle
+
+# Energy meter
+kasa-monitor kasa -H 192.168.1.100 emeter
+
+# Bulb brightness (0-100)
+kasa-monitor kasa -H 192.168.1.100 brightness 75
+
+# Bulb HSV color (hue 0-360, saturation 0-100, value 0-100)
+kasa-monitor kasa -H 192.168.1.100 hsv 180 50 80
+
+# Bulb color temperature (Kelvin)
+kasa-monitor kasa -H 192.168.1.100 temperature 3000
+
+# Device management
+kasa-monitor kasa -H 192.168.1.100 alias "Office Lamp"
+kasa-monitor kasa -H 192.168.1.100 led on
+kasa-monitor kasa -H 192.168.1.100 reboot
+
+# Discovery
+kasa-monitor kasa discover
+kasa-monitor kasa discover --timeout 10s
+```
 
 ## Docker Usage
 
@@ -201,16 +186,24 @@ python -m kasa_monitor --echo-metrics --run-once -o /etc/monitor.conf
 
 ```bash
 docker build -f Containerfile -t kasa-monitor:latest .
+# Or use make
+make docker-build
 ```
 
 ### Run Container
 
 ```bash
-# Continuous monitoring
+# Continuous monitoring with config file
 docker run -d \
-  -v $PWD/config/monitor.conf:/etc/monitor.conf:ro \
+  -v $PWD/config/example.toml:/etc/kasa-monitor/config.toml:ro \
   --name kasa-monitor \
   kasa-monitor:latest
+
+# Device status check
+docker run -it kasa-monitor:latest status -d 192.168.1.100
+
+# Device control
+docker run -it kasa-monitor:latest kasa -H 192.168.1.100 info
 ```
 
 ## Architecture
@@ -218,133 +211,81 @@ docker run -d \
 ### Package Structure
 
 ```
-kasa_monitor/
-├── core/           # Monitoring framework
-│   ├── config.py   # INI configuration parser
-│   ├── daemon.py   # Daemonization support
-│   ├── database.py # InfluxDB client
-│   ├── executor.py # Main execution framework
-│   ├── metrics.py  # Metrics pipeline
-│   └── utils.py    # System utilities
-├── devices/        # KASA device support (python-kasa)
-│   ├── async_device.py # Async device wrapper
-│   ├── exceptions.py   # Device exceptions
-│   └── utils.py        # Device utilities
-└── commands/       # CLI commands
-    └── async_poll.py  # Async polling with concurrent operations
+kasa-monitor/
+├── cmd/kasa-monitor/           # CLI entry point
+├── internal/
+│   ├── cli/                    # Cobra CLI commands
+│   │   ├── root.go             # Root command, global flags
+│   │   ├── poll.go             # Poll subcommand (daemon mode)
+│   │   ├── status.go           # Status subcommand
+│   │   └── kasa/               # Device control commands
+│   ├── config/                 # TOML configuration
+│   ├── poller/                 # Polling system
+│   ├── metrics/                # Metrics pipeline
+│   ├── backend/                # Storage backends (InfluxDB, Prometheus)
+│   └── daemon/                 # Daemon utilities
+└── pkg/
+    ├── kasa/                   # Public device library
+    │   ├── protocol/           # XOR cipher, message framing, TCP transport
+    │   ├── device/             # Device types (plug, bulb, strip)
+    │   ├── command/            # Command builders
+    │   └── types/              # Data types
+    └── mockdevice/             # Mock device for testing
 ```
 
 ### Device Protocol
 
-Uses the official [python-kasa](https://python-kasa.readthedocs.io/) library for device communication:
-- Async/await interface
-- Concurrent device operations
-- Automatic protocol handling
-- Support for both KASA and Tapo devices
-- No custom encryption implementation needed
+- XOR cipher with rolling key (initial key 0xAB)
+- 4-byte big-endian length header + encrypted JSON payload
+- TCP port 9999 (default), configurable timeout
 
-### Monitoring Flow
+### Polling Architecture
 
-1. **Discovery**: `discover_devices()` connects to all devices concurrently
-2. **Polling**: `poll_devices()` uses async map-reduce for concurrent data collection
-3. **Metrics**: Data converted to InfluxDB Point objects
-4. **Batch Upload**: Metrics queued and sent in configurable batches
+1. `Worker` polls all configured devices concurrently
+2. Each poll fetches emeter data and creates `Metric` objects
+3. Metrics are pushed to `Pipeline` which batches and sends to backends
+4. Signal handling: SIGINT/SIGTERM for shutdown, SIGHUP for config reload
 
-**Performance**: Concurrent async operations poll multiple devices simultaneously, reducing total cycle time by orders of magnitude.
+## Development
+
+### Build Commands
+
+```bash
+# Build the binary
+make build
+
+# Run all tests
+make test
+
+# Run tests with coverage
+make test-coverage
+
+# Format code
+make fmt
+
+# Lint code
+make lint
+
+# Clean build artifacts
+make clean
+```
+
+### Dependencies
+
+- [Cobra](https://github.com/spf13/cobra) - CLI framework
+- [BurntSushi/toml](https://github.com/BurntSushi/toml) - TOML configuration
+- [InfluxDB Client](https://github.com/influxdata/influxdb-client-go) - InfluxDB 2.x
+- [Prometheus Client](https://github.com/prometheus/client_golang) - Prometheus metrics
+- `log/slog` - Structured logging (standard library)
 
 ## Supported Devices
 
 - **Smart Plugs**: HS100, HS103, HS105, HS110 (with emeter)
 - **Smart Bulbs**: LB100, LB110, LB120, LB130 (color), KL110, KL120, KL130
 - **Light Strips**: KL400, KL430
+- **Power Strips**: HS300, KP303 (with per-outlet monitoring)
 
-Energy meter (emeter) support varies by model. Use `HasEmeter()` to check device capabilities.
-
-## Development
-
-### Project Structure
-
-This project combines what were previously two separate libraries:
-- **PyMonitorLib**: Monitoring framework with daemon support
-- **TPLink Library**: KASA device protocol implementation
-
-Both are now unified in the `kasa_monitor` package.
-
-### Running from Source
-
-```bash
-# Set PYTHONPATH if needed
-export PYTHONPATH=/path/to/tplink-smart-devices
-
-# Run the application
-python -m kasa_monitor [command] [options]
-```
-
-### Import Examples
-
-```python
-from kasa_monitor.core import Config, Execute, Metric
-from kasa_monitor.devices import Bulb, Plug, LoadDevice, LoadDevices
-from kasa_monitor.commands import Poll, Status, Interactive
-```
-
-## Requirements
-
-- Python 3.10+
-- InfluxDB 2.x (for metrics export)
-- Network access to KASA devices
-
-See `requirements.txt` for complete dependency list.
-
-## Platform Support
-
-- **Linux**: Full support including daemonization
-- **macOS**: Full support including daemonization
-- **Windows**: Full support except daemonization features
-
-## Development
-
-### Building and Testing
-
-The project includes a comprehensive Makefile for common tasks:
-
-```bash
-# Show all available commands
-make help
-
-# Run tests
-make test
-
-# Run tests with coverage
-make test-coverage
-
-# Build distribution packages
-make build
-
-# Clean build artifacts
-make clean
-
-# Run full CI pipeline
-make ci
-```
-
-### Testing
-
-Run the test suite:
-
-```bash
-# Using Make
-make test              # Run all tests
-make test-coverage     # Run with coverage report
-make test-fast         # Quick test run
-make test-unit         # Unit tests only
-
-# Using pytest directly
-pytest
-pytest --cov=kasa_monitor --cov-report=html
-```
-
-See [tests/README.md](tests/README.md) for detailed testing documentation.
+Energy meter (emeter) support varies by model.
 
 ## Troubleshooting
 
@@ -365,21 +306,25 @@ See [tests/README.md](tests/README.md) for detailed testing documentation.
 - Verify InfluxDB credentials in config file
 - Check that bucket/org exists
 - Review logs for connection errors
-- Ensure measurements are configured in config file
+- Ensure measurements are configured correctly
+
+## Requirements
+
+- Go 1.21+
+- InfluxDB 2.x (optional, for metrics export)
+- Network access to KASA devices on port 9999
+
+## Platform Support
+
+- **Linux**: Full support including signal handling
+- **macOS**: Full support
+- **Windows**: Full support
 
 ## License
 
 Copyright 2019-2024 Daniel Weiner
 
 Licensed under the Apache License, Version 2.0. See LICENSE file for details.
-
-## Acknowledgments
-
-Based on research into the TP-Link KASA protocol from the open-source community. Inspired by various JavaScript implementations adapted to Python.
-
-## Contributing
-
-This is a personal project for monitoring KASA devices. Feel free to fork and adapt to your needs.
 
 ## Disclaimer
 
