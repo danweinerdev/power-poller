@@ -15,10 +15,17 @@ type Bulb struct {
 	*BaseDevice
 }
 
-// NewBulb creates a new Bulb instance.
+// NewBulb creates a new Bulb instance with legacy TCP transport.
 func NewBulb(host string, opts ...protocol.TransportOption) *Bulb {
 	return &Bulb{
 		BaseDevice: NewBaseDevice(host, opts...),
+	}
+}
+
+// NewBulbWithTransport creates a new Bulb with a specific transport.
+func NewBulbWithTransport(transport protocol.Transporter) *Bulb {
+	return &Bulb{
+		BaseDevice: NewBaseDeviceWithTransport(transport),
 	}
 }
 

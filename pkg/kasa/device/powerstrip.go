@@ -26,10 +26,17 @@ type ChildOutlet struct {
 	isOn   bool
 }
 
-// NewPowerStrip creates a new PowerStrip instance.
+// NewPowerStrip creates a new PowerStrip instance with legacy TCP transport.
 func NewPowerStrip(host string, opts ...protocol.TransportOption) *PowerStrip {
 	return &PowerStrip{
 		BaseDevice: NewBaseDevice(host, opts...),
+	}
+}
+
+// NewPowerStripWithTransport creates a new PowerStrip with a specific transport.
+func NewPowerStripWithTransport(transport protocol.Transporter) *PowerStrip {
+	return &PowerStrip{
+		BaseDevice: NewBaseDeviceWithTransport(transport),
 	}
 }
 

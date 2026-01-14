@@ -79,8 +79,9 @@ func loadDevice(ctx context.Context) (device.Device, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	opts := []protocol.TransportOption{
-		protocol.WithTimeout(timeout),
+	opts := []device.LoadOption{
+		device.WithTransportOptions(protocol.WithTimeout(timeout)),
+		device.WithKLAPOptions(protocol.WithKLAPTimeout(timeout)),
 	}
 
 	return device.Load(ctx, host, opts...)

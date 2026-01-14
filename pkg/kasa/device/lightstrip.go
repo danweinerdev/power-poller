@@ -14,10 +14,17 @@ type LightStrip struct {
 	*Bulb
 }
 
-// NewLightStrip creates a new LightStrip instance.
+// NewLightStrip creates a new LightStrip instance with legacy TCP transport.
 func NewLightStrip(host string, opts ...protocol.TransportOption) *LightStrip {
 	return &LightStrip{
 		Bulb: NewBulb(host, opts...),
+	}
+}
+
+// NewLightStripWithTransport creates a new LightStrip with a specific transport.
+func NewLightStripWithTransport(transport protocol.Transporter) *LightStrip {
+	return &LightStrip{
+		Bulb: NewBulbWithTransport(transport),
 	}
 }
 

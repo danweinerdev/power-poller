@@ -45,8 +45,9 @@ func runStatus(cmd *cobra.Command, args []string) error {
 
 	log.Debug("connecting to device", "address", statusDevice)
 
-	opts := []protocol.TransportOption{
-		protocol.WithTimeout(statusTimeout),
+	opts := []device.LoadOption{
+		device.WithTransportOptions(protocol.WithTimeout(statusTimeout)),
+		device.WithKLAPOptions(protocol.WithKLAPTimeout(statusTimeout)),
 	}
 
 	dev, err := device.Load(ctx, statusDevice, opts...)
