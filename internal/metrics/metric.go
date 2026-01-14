@@ -186,3 +186,31 @@ func EmeterToMetric(measurement string, tags map[string]string, voltage, current
 		WithField("power", power).
 		WithField("total", total)
 }
+
+// DeviceStatsToMetric creates a device stats metric with connection information.
+func DeviceStatsToMetric(tags map[string]string, responseTimeMs float64, success bool, rssi int) *Metric {
+	successVal := 0
+	errorCount := 1
+	if success {
+		successVal = 1
+		errorCount = 0
+	}
+
+	return NewMetric("device_stats").
+		WithTags(tags).
+		WithField("response_time_ms", responseTimeMs).
+		WithField("success", successVal).
+		WithField("error_count", errorCount).
+		WithField("rssi", rssi)
+}
+
+// PollerStatsToMetric creates a poller stats metric with aggregate poll cycle information.
+func PollerStatsToMetric(pollDurationMs float64, devicesPolled, devicesSuccess, devicesFailed, metricsCollected int) *Metric {
+	return NewMetric("poller_stats").
+		WithTag("poller", "kasa-monitor").
+		WithField("poll_duration_ms", pollDurationMs).
+		WithField("devices_polled", devicesPolled).
+		WithField("devices_success", devicesSuccess).
+		WithField("devices_failed", devicesFailed).
+		WithField("metrics_collected", metricsCollected)
+}

@@ -148,7 +148,7 @@ func TestCollector_Update_MultipleDevices(t *testing.T) {
 
 func TestCollector_Describe(t *testing.T) {
 	c := NewCollector()
-	ch := make(chan *prometheus.Desc, 20)
+	ch := make(chan *prometheus.Desc, 30)
 
 	go func() {
 		c.Describe(ch)
@@ -160,8 +160,8 @@ func TestCollector_Describe(t *testing.T) {
 		descs = append(descs, desc)
 	}
 
-	// Should have 9 descriptors
-	expectedCount := 9
+	// Should have 19 descriptors: 9 emeter/bulb + 5 device stats + 5 poller stats
+	expectedCount := 19
 	if len(descs) != expectedCount {
 		t.Errorf("Describe() sent %d descriptors, want %d", len(descs), expectedCount)
 	}
@@ -181,8 +181,9 @@ func TestCollector_Collect_Empty(t *testing.T) {
 		metrics = append(metrics, m)
 	}
 
-	if len(metrics) != 0 {
-		t.Errorf("Collect() with no devices sent %d metrics, want 0", len(metrics))
+	// Even with no devices, poller stats are always emitted (5 metrics)
+	if len(metrics) != 5 {
+		t.Errorf("Collect() with no devices sent %d metrics, want 5 (poller stats)", len(metrics))
 	}
 }
 
@@ -210,9 +211,9 @@ func TestCollector_Collect_WithEmeterDevice(t *testing.T) {
 		metrics = append(metrics, pm)
 	}
 
-	// Should have: state + 4 emeter metrics = 5
-	if len(metrics) != 5 {
-		t.Errorf("Collect() sent %d metrics, want 5", len(metrics))
+	// Should have: state + 4 emeter metrics + 5 poller stats = 10
+	if len(metrics) != 10 {
+		t.Errorf("Collect() sent %d metrics, want 10", len(metrics))
 	}
 }
 
@@ -240,9 +241,9 @@ func TestCollector_Collect_WithBulbDevice(t *testing.T) {
 		metrics = append(metrics, pm)
 	}
 
-	// Should have: state + 4 bulb metrics = 5
-	if len(metrics) != 5 {
-		t.Errorf("Collect() sent %d metrics, want 5", len(metrics))
+	// Should have: state + 4 bulb metrics + 5 poller stats = 10
+	if len(metrics) != 10 {
+		t.Errorf("Collect() sent %d metrics, want 10", len(metrics))
 	}
 }
 
@@ -274,9 +275,9 @@ func TestCollector_Collect_WithMixedDevice(t *testing.T) {
 		metrics = append(metrics, pm)
 	}
 
-	// Should have: state + 4 emeter + 4 bulb = 9
-	if len(metrics) != 9 {
-		t.Errorf("Collect() sent %d metrics, want 9", len(metrics))
+	// Should have: state + 4 emeter + 4 bulb + 5 poller stats = 14
+	if len(metrics) != 14 {
+		t.Errorf("Collect() sent %d metrics, want 14", len(metrics))
 	}
 }
 

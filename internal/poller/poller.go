@@ -102,13 +102,12 @@ func (p *Poller) doPoll(ctx context.Context) {
 	for _, result := range results {
 		if result.Error != nil {
 			failCount++
-			continue
+		} else {
+			successCount++
 		}
 
-		successCount++
+		// Push all metrics to pipeline (including device_stats for failures)
 		metricCount += int64(len(result.Metrics))
-
-		// Push metrics to pipeline
 		for _, m := range result.Metrics {
 			p.pipeline.Push(m)
 		}
@@ -116,10 +115,20 @@ func (p *Poller) doPoll(ctx context.Context) {
 
 	duration := time.Since(start)
 
+	// Create and push poller stats metric
+	pollerStats := metrics.PollerStatsToMetric(
+		float64(duration.Milliseconds()),
+		len(results),
+		int(successCount),
+		int(failCount),
+		int(metricCount),
+	)
+	p.pipeline.Push(pollerStats)
+
 	p.mu.Lock()
 	p.stats.SuccessfulPolls += successCount
 	p.stats.FailedPolls += failCount
-	p.stats.TotalMetrics += metricCount
+	p.stats.TotalMetrics += metricCount + 1 // +1 for poller_stats
 	p.stats.LastPollDuration = duration
 	p.mu.Unlock()
 

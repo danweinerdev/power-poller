@@ -233,9 +233,12 @@ func TestWorker_PollDevice_NoEmeter(t *testing.T) {
 	if result.Error != nil {
 		t.Errorf("unexpected error: %v", result.Error)
 	}
-	// No emeter means no metrics
-	if len(result.Metrics) != 0 {
-		t.Errorf("expected 0 metrics for device without emeter, got %d", len(result.Metrics))
+	// No emeter means only device_stats metric
+	if len(result.Metrics) != 1 {
+		t.Errorf("expected 1 metric (device_stats only), got %d", len(result.Metrics))
+	}
+	if len(result.Metrics) > 0 && result.Metrics[0].Measurement != "device_stats" {
+		t.Errorf("expected device_stats metric, got %s", result.Metrics[0].Measurement)
 	}
 }
 
@@ -453,9 +456,9 @@ func TestWorker_PollDevice_MultipleMeasurements(t *testing.T) {
 		t.Errorf("unexpected error: %v", result.Error)
 	}
 
-	// Should have metrics for each measurement
-	if len(result.Metrics) != 2 {
-		t.Errorf("expected 2 metrics (one per measurement), got %d", len(result.Metrics))
+	// Should have metrics for each measurement + device_stats
+	if len(result.Metrics) != 3 {
+		t.Errorf("expected 3 metrics (2 measurements + device_stats), got %d", len(result.Metrics))
 	}
 
 	// Check measurements names
@@ -469,5 +472,8 @@ func TestWorker_PollDevice_MultipleMeasurements(t *testing.T) {
 	}
 	if !measurements["energy_stats"] {
 		t.Error("missing energy_stats measurement")
+	}
+	if !measurements["device_stats"] {
+		t.Error("missing device_stats measurement")
 	}
 }

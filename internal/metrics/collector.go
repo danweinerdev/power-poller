@@ -10,17 +10,32 @@ import (
 type Collector struct {
 	mu      sync.RWMutex
 	metrics map[string]*deviceMetrics
+	poller  *pollerMetrics
 
-	// Prometheus descriptors
-	voltageDesc   *prometheus.Desc
-	currentDesc   *prometheus.Desc
-	powerDesc     *prometheus.Desc
-	totalDesc     *prometheus.Desc
-	stateDesc     *prometheus.Desc
+	// Prometheus descriptors - emeter
+	voltageDesc    *prometheus.Desc
+	currentDesc    *prometheus.Desc
+	powerDesc      *prometheus.Desc
+	totalDesc      *prometheus.Desc
+	stateDesc      *prometheus.Desc
 	brightnessDesc *prometheus.Desc
-	hueDesc       *prometheus.Desc
+	hueDesc        *prometheus.Desc
 	saturationDesc *prometheus.Desc
-	colorTempDesc *prometheus.Desc
+	colorTempDesc  *prometheus.Desc
+
+	// Prometheus descriptors - device stats
+	responseTimeDesc *prometheus.Desc
+	deviceSuccessDesc *prometheus.Desc
+	deviceErrorsDesc *prometheus.Desc
+	devicePollsDesc  *prometheus.Desc
+	rssiDesc         *prometheus.Desc
+
+	// Prometheus descriptors - poller stats
+	pollDurationDesc    *prometheus.Desc
+	pollDevicesDesc     *prometheus.Desc
+	pollSuccessDesc     *prometheus.Desc
+	pollFailedDesc      *prometheus.Desc
+	pollMetricsDesc     *prometheus.Desc
 }
 
 // deviceMetrics holds the latest values for a device.
@@ -37,12 +52,35 @@ type deviceMetrics struct {
 	colorTemp  float64
 	hasEmeter  bool
 	hasBulb    bool
+
+	// Device stats
+	responseTimeMs float64
+	success        float64
+	errorsTotal    float64 // cumulative counter
+	pollsTotal     float64 // cumulative counter
+	rssi           float64
+	hasStats       bool
+}
+
+// pollerMetrics holds aggregate poller stats.
+type pollerMetrics struct {
+	pollDurationMs   float64
+	devicesPolled    float64
+	devicesSuccess   float64
+	devicesFailed    float64
+	metricsCollected float64
 }
 
 // NewCollector creates a new Prometheus collector.
 func NewCollector() *Collector {
+	// Labels for device stats include device info
+	deviceStatsLabels := []string{"device", "address", "model", "hw_version", "sw_version", "device_type"}
+
 	return &Collector{
 		metrics: make(map[string]*deviceMetrics),
+		poller:  &pollerMetrics{},
+
+		// Emeter descriptors
 		voltageDesc: prometheus.NewDesc(
 			"kasa_voltage_volts",
 			"Current voltage in volts",
@@ -88,6 +126,60 @@ func NewCollector() *Collector {
 			"Bulb color temperature in Kelvin",
 			[]string{"device", "address"}, nil,
 		),
+
+		// Device stats descriptors
+		responseTimeDesc: prometheus.NewDesc(
+			"kasa_device_response_time_seconds",
+			"Device poll response time in seconds",
+			deviceStatsLabels, nil,
+		),
+		deviceSuccessDesc: prometheus.NewDesc(
+			"kasa_device_success",
+			"Device poll success (1=success, 0=failure)",
+			deviceStatsLabels, nil,
+		),
+		deviceErrorsDesc: prometheus.NewDesc(
+			"kasa_device_errors_total",
+			"Total number of device poll errors",
+			deviceStatsLabels, nil,
+		),
+		devicePollsDesc: prometheus.NewDesc(
+			"kasa_device_polls_total",
+			"Total number of device polls",
+			deviceStatsLabels, nil,
+		),
+		rssiDesc: prometheus.NewDesc(
+			"kasa_device_rssi_dbm",
+			"Device WiFi signal strength in dBm",
+			deviceStatsLabels, nil,
+		),
+
+		// Poller stats descriptors
+		pollDurationDesc: prometheus.NewDesc(
+			"kasa_poll_duration_seconds",
+			"Duration of the last poll cycle in seconds",
+			[]string{"poller"}, nil,
+		),
+		pollDevicesDesc: prometheus.NewDesc(
+			"kasa_poll_devices_total",
+			"Number of devices polled in the last cycle",
+			[]string{"poller"}, nil,
+		),
+		pollSuccessDesc: prometheus.NewDesc(
+			"kasa_poll_devices_success",
+			"Number of devices successfully polled in the last cycle",
+			[]string{"poller"}, nil,
+		),
+		pollFailedDesc: prometheus.NewDesc(
+			"kasa_poll_devices_failed",
+			"Number of devices that failed polling in the last cycle",
+			[]string{"poller"}, nil,
+		),
+		pollMetricsDesc: prometheus.NewDesc(
+			"kasa_poll_metrics_collected",
+			"Number of metrics collected in the last cycle",
+			[]string{"poller"}, nil,
+		),
 	}
 }
 
@@ -95,6 +187,12 @@ func NewCollector() *Collector {
 func (c *Collector) Update(deviceName string, m *Metric) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
+	// Handle poller_stats separately
+	if m.Measurement == "poller_stats" {
+		c.updatePollerStats(m)
+		return
+	}
 
 	dm, ok := c.metrics[deviceName]
 	if !ok {
@@ -109,7 +207,13 @@ func (c *Collector) Update(deviceName string, m *Metric) {
 		dm.tags[k] = v
 	}
 
-	// Update values from fields
+	// Handle device_stats measurement
+	if m.Measurement == "device_stats" {
+		c.updateDeviceStats(dm, m)
+		return
+	}
+
+	// Update values from fields (emeter and bulb metrics)
 	for k, v := range m.Fields {
 		fv := toFloat64(v)
 		switch k {
@@ -143,8 +247,48 @@ func (c *Collector) Update(deviceName string, m *Metric) {
 	}
 }
 
+// updateDeviceStats updates device stats from a device_stats metric (must hold lock).
+func (c *Collector) updateDeviceStats(dm *deviceMetrics, m *Metric) {
+	dm.hasStats = true
+	dm.pollsTotal++ // Increment poll counter
+
+	for k, v := range m.Fields {
+		fv := toFloat64(v)
+		switch k {
+		case "response_time_ms":
+			dm.responseTimeMs = fv
+		case "success":
+			dm.success = fv
+		case "error_count":
+			dm.errorsTotal += fv // Accumulate errors
+		case "rssi":
+			dm.rssi = fv
+		}
+	}
+}
+
+// updatePollerStats updates poller stats from a poller_stats metric (must hold lock).
+func (c *Collector) updatePollerStats(m *Metric) {
+	for k, v := range m.Fields {
+		fv := toFloat64(v)
+		switch k {
+		case "poll_duration_ms":
+			c.poller.pollDurationMs = fv
+		case "devices_polled":
+			c.poller.devicesPolled = fv
+		case "devices_success":
+			c.poller.devicesSuccess = fv
+		case "devices_failed":
+			c.poller.devicesFailed = fv
+		case "metrics_collected":
+			c.poller.metricsCollected = fv
+		}
+	}
+}
+
 // Describe implements prometheus.Collector.
 func (c *Collector) Describe(ch chan<- *prometheus.Desc) {
+	// Emeter descriptors
 	ch <- c.voltageDesc
 	ch <- c.currentDesc
 	ch <- c.powerDesc
@@ -154,6 +298,20 @@ func (c *Collector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- c.hueDesc
 	ch <- c.saturationDesc
 	ch <- c.colorTempDesc
+
+	// Device stats descriptors
+	ch <- c.responseTimeDesc
+	ch <- c.deviceSuccessDesc
+	ch <- c.deviceErrorsDesc
+	ch <- c.devicePollsDesc
+	ch <- c.rssiDesc
+
+	// Poller stats descriptors
+	ch <- c.pollDurationDesc
+	ch <- c.pollDevicesDesc
+	ch <- c.pollSuccessDesc
+	ch <- c.pollFailedDesc
+	ch <- c.pollMetricsDesc
 }
 
 // Collect implements prometheus.Collector.
@@ -187,7 +345,42 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 			ch <- prometheus.MustNewConstMetric(c.saturationDesc, prometheus.GaugeValue, dm.saturation, labels...)
 			ch <- prometheus.MustNewConstMetric(c.colorTempDesc, prometheus.GaugeValue, dm.colorTemp, labels...)
 		}
+
+		// Device stats metrics
+		if dm.hasStats {
+			statsLabels := []string{
+				deviceName,
+				address,
+				getTagOrDefault(dm.tags, "model", "unknown"),
+				getTagOrDefault(dm.tags, "hw_version", "unknown"),
+				getTagOrDefault(dm.tags, "sw_version", "unknown"),
+				getTagOrDefault(dm.tags, "device_type", "unknown"),
+			}
+
+			// Response time in seconds (convert from ms)
+			ch <- prometheus.MustNewConstMetric(c.responseTimeDesc, prometheus.GaugeValue, dm.responseTimeMs/1000.0, statsLabels...)
+			ch <- prometheus.MustNewConstMetric(c.deviceSuccessDesc, prometheus.GaugeValue, dm.success, statsLabels...)
+			ch <- prometheus.MustNewConstMetric(c.deviceErrorsDesc, prometheus.CounterValue, dm.errorsTotal, statsLabels...)
+			ch <- prometheus.MustNewConstMetric(c.devicePollsDesc, prometheus.CounterValue, dm.pollsTotal, statsLabels...)
+			ch <- prometheus.MustNewConstMetric(c.rssiDesc, prometheus.GaugeValue, dm.rssi, statsLabels...)
+		}
 	}
+
+	// Poller stats
+	pollerLabel := []string{"kasa-monitor"}
+	ch <- prometheus.MustNewConstMetric(c.pollDurationDesc, prometheus.GaugeValue, c.poller.pollDurationMs/1000.0, pollerLabel...)
+	ch <- prometheus.MustNewConstMetric(c.pollDevicesDesc, prometheus.GaugeValue, c.poller.devicesPolled, pollerLabel...)
+	ch <- prometheus.MustNewConstMetric(c.pollSuccessDesc, prometheus.GaugeValue, c.poller.devicesSuccess, pollerLabel...)
+	ch <- prometheus.MustNewConstMetric(c.pollFailedDesc, prometheus.GaugeValue, c.poller.devicesFailed, pollerLabel...)
+	ch <- prometheus.MustNewConstMetric(c.pollMetricsDesc, prometheus.GaugeValue, c.poller.metricsCollected, pollerLabel...)
+}
+
+// getTagOrDefault returns the tag value or a default if not present.
+func getTagOrDefault(tags map[string]string, key, defaultVal string) string {
+	if v, ok := tags[key]; ok && v != "" {
+		return v
+	}
+	return defaultVal
 }
 
 // toFloat64 converts various numeric types to float64.

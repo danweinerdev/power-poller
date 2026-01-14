@@ -94,9 +94,33 @@ func (w *Worker) pollDevice(ctx context.Context, deviceName string, devCfg confi
 			"address", devCfg.Address,
 			"error", err,
 		)
+		// Create device stats metric for failed connection
+		statsTags := map[string]string{
+			"device":      deviceName,
+			"address":     devCfg.Address,
+			"model":       "unknown",
+			"hw_version":  "unknown",
+			"sw_version":  "unknown",
+			"device_type": "unknown",
+		}
+		statsMetric := metrics.DeviceStatsToMetric(statsTags, float64(result.Duration.Milliseconds()), false, 0)
+		result.Metrics = append(result.Metrics, statsMetric)
 		return result
 	}
 	defer dev.Close()
+
+	// Extract device info from sysinfo
+	sysinfo := dev.SysInfo()
+	rssi := 0
+	model := dev.Model()
+	hwVersion := ""
+	swVersion := ""
+	deviceType := dev.Type().String()
+	if sysinfo != nil {
+		rssi = sysinfo.RSSI
+		hwVersion = sysinfo.HWVersion
+		swVersion = sysinfo.SWVersion
+	}
 
 	// Build base tags
 	tags := w.cfg.GetDeviceTags(deviceName, map[string]string{
@@ -123,6 +147,19 @@ func (w *Worker) pollDevice(ctx context.Context, deviceName string, devCfg confi
 	}
 
 	result.Duration = time.Since(start)
+
+	// Create device stats metric
+	statsTags := map[string]string{
+		"device":      deviceName,
+		"address":     devCfg.Address,
+		"model":       model,
+		"hw_version":  hwVersion,
+		"sw_version":  swVersion,
+		"device_type": deviceType,
+	}
+	statsMetric := metrics.DeviceStatsToMetric(statsTags, float64(result.Duration.Milliseconds()), true, rssi)
+	result.Metrics = append(result.Metrics, statsMetric)
+
 	w.logger.Debug("polled device",
 		"device", deviceName,
 		"metrics", len(result.Metrics),
