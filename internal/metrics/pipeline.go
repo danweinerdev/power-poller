@@ -147,7 +147,9 @@ func (p *Pipeline) Push(m *Metric) {
 	p.mu.Unlock()
 
 	if shouldFlush {
+		p.wg.Add(1)
 		go func() {
+			defer p.wg.Done()
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 			if err := p.Flush(ctx); err != nil {
