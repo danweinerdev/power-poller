@@ -13,13 +13,16 @@ func GetEmeterRealtimeBulb() Command {
 }
 
 // GetEmeterRealtimeForChild returns command to get emeter data for a child device.
+// For HS300 power strips, context.child_ids must be a direct array, not nested.
 func GetEmeterRealtimeForChild(childID string) Command {
-	return Merge(
-		New(NSContext, "child_ids", map[string]interface{}{
+	return Command{
+		"context": {
 			"child_ids": []string{childID},
-		}),
-		New(NSEmeter, "get_realtime", nil),
-	)
+		},
+		"emeter": {
+			"get_realtime": map[string]interface{}{},
+		},
+	}
 }
 
 // GetEmeterDaily returns command to get daily stats for a given month.

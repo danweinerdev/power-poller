@@ -50,7 +50,7 @@ func (e *EmeterData) Normalize() EmeterData {
 	if e.Total != 0 {
 		result.Total = e.Total
 	} else if e.TotalWH != 0 {
-		result.Total = e.TotalWH
+		result.Total = e.TotalWH / 1000.0 // Convert Wh to kWh
 	}
 
 	return result
