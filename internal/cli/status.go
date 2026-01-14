@@ -123,7 +123,20 @@ func runStatus(cmd *cobra.Command, args []string) error {
 			if child.IsOn() {
 				state = "ON"
 			}
-			fmt.Fprintf(w, "[%d] %s:\t%s\n", i, child.Alias(), state)
+			fmt.Fprintf(w, "\n[%d] %s\t%s\n", i, child.Alias(), state)
+
+			// Print emeter data for child if available
+			if emeterChild, ok := child.(device.EmeterDevice); ok && emeterChild.HasEmeter() {
+				data, err := emeterChild.GetEmeterRealtime(ctx)
+				if err != nil {
+					fmt.Fprintf(w, "    Energy:\tError: %v\n", err)
+				} else {
+					fmt.Fprintf(w, "    Voltage:\t%.1f V\n", data.Voltage)
+					fmt.Fprintf(w, "    Current:\t%.3f A\n", data.Current)
+					fmt.Fprintf(w, "    Power:\t%.1f W\n", data.Power)
+					fmt.Fprintf(w, "    Total:\t%.3f kWh\n", data.Total)
+				}
+			}
 		}
 	}
 
