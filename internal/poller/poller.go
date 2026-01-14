@@ -144,6 +144,7 @@ func (p *Poller) detectProtocols(ctx context.Context) error {
 	legacyCount := 0
 	klapCount := 0
 	klapAuthCount := 0
+	securePassthroughCount := 0
 	unknownCount := 0
 	unreachableCount := 0
 	var missingCredentials []string
@@ -172,6 +173,9 @@ func (p *Poller) detectProtocols(ctx context.Context) error {
 			}
 			// Store as KLAP in the cache (the auth requirement is handled by config)
 			p.protocolCache.Set(host, protocol.ProtocolKLAP)
+		case protocol.ProtocolSecurePassthrough:
+			securePassthroughCount++
+			p.logger.Debug("detected protocol", "host", host, "device", deviceName, "protocol", "securepassthrough")
 		case protocol.ProtocolUnreachable:
 			unreachableCount++
 			p.logger.Warn("device unreachable", "host", host, "device", deviceName)
@@ -193,6 +197,7 @@ func (p *Poller) detectProtocols(ctx context.Context) error {
 		"legacy", legacyCount,
 		"klap", klapCount,
 		"klap_auth_required", klapAuthCount,
+		"securepassthrough", securePassthroughCount,
 		"unknown", unknownCount,
 		"unreachable", unreachableCount,
 	)
