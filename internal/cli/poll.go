@@ -14,9 +14,10 @@ import (
 )
 
 var (
-	foreground bool
-	pidFile    string
-	echoMode   bool
+	foreground    bool
+	pidFile       string
+	echoMode      bool
+	ignoreUnknown bool
 )
 
 var pollCmd = &cobra.Command{
@@ -28,7 +29,8 @@ This command runs continuously, polling configured devices at the specified
 interval and sending metrics to configured backends (InfluxDB, Prometheus).
 
 Use -o/--foreground to run in foreground mode (no daemonization).
-Use --echo to output metrics to stdout instead of backends (for debugging).`,
+Use --echo to output metrics to stdout instead of backends (for debugging).
+Use --ignore-unknown to skip devices that are reachable but have unsupported protocols.`,
 	RunE: runPoll,
 }
 
@@ -36,6 +38,7 @@ func init() {
 	pollCmd.Flags().BoolVarP(&foreground, "foreground", "o", false, "run in foreground (no daemonize)")
 	pollCmd.Flags().StringVar(&pidFile, "pid-file", "", "PID file path")
 	pollCmd.Flags().BoolVar(&echoMode, "echo", false, "echo metrics to stdout (debug mode)")
+	pollCmd.Flags().BoolVar(&ignoreUnknown, "ignore-unknown", false, "ignore devices with unrecognized protocols")
 
 	rootCmd.AddCommand(pollCmd)
 }
@@ -111,7 +114,7 @@ func runPoll(cmd *cobra.Command, args []string) error {
 	}()
 
 	// Create and run poller
-	p := poller.New(cfg, pipeline, log)
+	p := poller.New(cfg, pipeline, log, poller.WithIgnoreUnknownDevices(ignoreUnknown))
 
 	// Handle config reload
 	go func() {

@@ -112,16 +112,16 @@ func TestProtocolCache_Detect_KLAP(t *testing.T) {
 	}
 }
 
-func TestProtocolCache_Detect_Unknown(t *testing.T) {
+func TestProtocolCache_Detect_Unreachable(t *testing.T) {
 	cache := NewProtocolCache()
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
 
-	// Use a non-routable address
+	// Use a non-routable address - device is unreachable
 	proto := cache.Detect(ctx, "10.255.255.1")
 
-	if proto != ProtocolUnknown {
-		t.Errorf("Detect() for unreachable host = %v, want %v", proto, ProtocolUnknown)
+	if proto != ProtocolUnreachable {
+		t.Errorf("Detect() for unreachable host = %v, want %v", proto, ProtocolUnreachable)
 	}
 }
 
@@ -251,8 +251,45 @@ func TestProtocolType_Constants(t *testing.T) {
 	if ProtocolKLAP != "klap" {
 		t.Errorf("ProtocolKLAP = %q, want %q", ProtocolKLAP, "klap")
 	}
+	if ProtocolKLAPAuthRequired != "klap_auth_required" {
+		t.Errorf("ProtocolKLAPAuthRequired = %q, want %q", ProtocolKLAPAuthRequired, "klap_auth_required")
+	}
 	if ProtocolUnknown != "unknown" {
 		t.Errorf("ProtocolUnknown = %q, want %q", ProtocolUnknown, "unknown")
+	}
+	if ProtocolUnreachable != "unreachable" {
+		t.Errorf("ProtocolUnreachable = %q, want %q", ProtocolUnreachable, "unreachable")
+	}
+}
+
+func TestComputeDetectLocalHash(t *testing.T) {
+	// Verify hash computation matches the KLAP implementation
+	hash := computeDetectLocalHash(DefaultKLAPUsername, DefaultKLAPPassword)
+	if len(hash) != 32 {
+		t.Errorf("computeDetectLocalHash() returned %d bytes, want 32", len(hash))
+	}
+
+	// Should produce the same result as the KLAP computeLocalHash function
+	expected := computeLocalHash(DefaultKLAPUsername, DefaultKLAPPassword)
+	if string(hash) != string(expected) {
+		t.Error("computeDetectLocalHash() should match computeLocalHash()")
+	}
+}
+
+func TestComputeDetectHash(t *testing.T) {
+	localHash := make([]byte, 32)
+	seed1 := make([]byte, 16)
+	seed2 := make([]byte, 16)
+
+	hash := computeDetectHash(localHash, seed1, seed2)
+	if len(hash) != 32 {
+		t.Errorf("computeDetectHash() returned %d bytes, want 32", len(hash))
+	}
+
+	// Should produce the same result as the KLAP computeHash function
+	expected := computeHash(localHash, seed1, seed2)
+	if string(hash) != string(expected) {
+		t.Error("computeDetectHash() should match computeHash()")
 	}
 }
 

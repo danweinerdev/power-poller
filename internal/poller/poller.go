@@ -2,20 +2,25 @@ package poller
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/danweinerdev/go-power-poller/internal/config"
 	"github.com/danweinerdev/go-power-poller/internal/metrics"
+	"github.com/danweinerdev/go-power-poller/pkg/kasa/protocol"
 )
 
 // Poller manages the main polling loop.
 type Poller struct {
-	cfg      *config.Config
-	pipeline *metrics.Pipeline
-	worker   *Worker
-	logger   *slog.Logger
+	cfg           *config.Config
+	pipeline      *metrics.Pipeline
+	worker        *Worker
+	logger        *slog.Logger
+	protocolCache *protocol.ProtocolCache
+	options       Options
 
 	mu       sync.RWMutex
 	running  bool
@@ -23,25 +28,49 @@ type Poller struct {
 	stats    Stats
 }
 
+// Options configures poller behavior.
+type Options struct {
+	// IgnoreUnknownDevices allows the poller to continue even if some devices
+	// are reachable but have an unrecognized protocol. If false (default),
+	// the poller will error on startup if any device is reachable but unsupported.
+	IgnoreUnknownDevices bool
+}
+
 // Stats holds polling statistics.
 type Stats struct {
-	TotalPolls     int64
-	SuccessfulPolls int64
-	FailedPolls    int64
-	TotalMetrics   int64
+	TotalPolls       int64
+	SuccessfulPolls  int64
+	FailedPolls      int64
+	TotalMetrics     int64
 	LastPollDuration time.Duration
 }
 
 // New creates a new Poller.
-func New(cfg *config.Config, pipeline *metrics.Pipeline, logger *slog.Logger) *Poller {
+func New(cfg *config.Config, pipeline *metrics.Pipeline, logger *slog.Logger, opts ...func(*Options)) *Poller {
 	if logger == nil {
 		logger = slog.Default()
 	}
+
+	options := Options{}
+	for _, opt := range opts {
+		opt(&options)
+	}
+
+	cache := protocol.NewProtocolCache()
 	return &Poller{
-		cfg:      cfg,
-		pipeline: pipeline,
-		worker:   NewWorker(cfg, logger),
-		logger:   logger,
+		cfg:           cfg,
+		pipeline:      pipeline,
+		worker:        NewWorker(cfg, cache, logger),
+		logger:        logger,
+		protocolCache: cache,
+		options:       options,
+	}
+}
+
+// WithIgnoreUnknownDevices sets whether to ignore unknown devices.
+func WithIgnoreUnknownDevices(ignore bool) func(*Options) {
+	return func(o *Options) {
+		o.IgnoreUnknownDevices = ignore
 	}
 }
 
@@ -67,6 +96,11 @@ func (p *Poller) Run(ctx context.Context) error {
 		"devices", len(p.cfg.Devices),
 	)
 
+	// Detect protocols for all devices at startup
+	if err := p.detectProtocols(ctx); err != nil {
+		return fmt.Errorf("protocol detection failed: %w", err)
+	}
+
 	// Do initial poll immediately
 	p.doPoll(ctx)
 
@@ -83,6 +117,104 @@ func (p *Poller) Run(ctx context.Context) error {
 			p.doPoll(ctx)
 		}
 	}
+}
+
+// detectProtocols probes all configured devices to detect their protocols.
+// Returns an error if:
+// - Any KLAP device requires credentials that are not configured
+// - Any device is reachable but has an unsupported protocol (unless IgnoreUnknownDevices is set)
+func (p *Poller) detectProtocols(ctx context.Context) error {
+	// Build host list and reverse mapping from address to device name
+	hosts := make([]string, 0, len(p.cfg.Devices))
+	addressToName := make(map[string]string)
+	for name, devCfg := range p.cfg.Devices {
+		hosts = append(hosts, devCfg.Address)
+		addressToName[devCfg.Address] = name
+	}
+
+	if len(hosts) == 0 {
+		return nil
+	}
+
+	p.logger.Info("detecting protocols for devices", "count", len(hosts))
+	start := time.Now()
+
+	results := p.protocolCache.DetectAll(ctx, hosts)
+
+	legacyCount := 0
+	klapCount := 0
+	klapAuthCount := 0
+	unknownCount := 0
+	unreachableCount := 0
+	var missingCredentials []string
+	var unknownDevices []string
+
+	for host, proto := range results {
+		deviceName := addressToName[host]
+		switch proto {
+		case protocol.ProtocolLegacy:
+			legacyCount++
+			p.logger.Debug("detected protocol", "host", host, "device", deviceName, "protocol", "legacy")
+		case protocol.ProtocolKLAP:
+			klapCount++
+			p.logger.Debug("detected protocol", "host", host, "device", deviceName, "protocol", "klap", "auth", "default")
+		case protocol.ProtocolKLAPAuthRequired:
+			klapAuthCount++
+			// Check if credentials are configured for this device
+			if _, _, hasCredentials := p.cfg.GetDeviceCredentials(deviceName); !hasCredentials {
+				p.logger.Error("KLAP device requires credentials but none configured",
+					"host", host,
+					"device", deviceName,
+				)
+				missingCredentials = append(missingCredentials, deviceName)
+			} else {
+				p.logger.Debug("detected protocol", "host", host, "device", deviceName, "protocol", "klap", "auth", "custom")
+			}
+			// Store as KLAP in the cache (the auth requirement is handled by config)
+			p.protocolCache.Set(host, protocol.ProtocolKLAP)
+		case protocol.ProtocolUnreachable:
+			unreachableCount++
+			p.logger.Warn("device unreachable", "host", host, "device", deviceName)
+		case protocol.ProtocolUnknown:
+			unknownCount++
+			p.logger.Error("device reachable but protocol not recognized",
+				"host", host,
+				"device", deviceName,
+			)
+			unknownDevices = append(unknownDevices, deviceName)
+		default:
+			unknownCount++
+			p.logger.Warn("unexpected protocol type", "host", host, "device", deviceName, "protocol", proto)
+		}
+	}
+
+	p.logger.Info("protocol detection complete",
+		"duration", time.Since(start),
+		"legacy", legacyCount,
+		"klap", klapCount,
+		"klap_auth_required", klapAuthCount,
+		"unknown", unknownCount,
+		"unreachable", unreachableCount,
+	)
+
+	// Collect errors
+	var errors []string
+
+	if len(missingCredentials) > 0 {
+		errors = append(errors, fmt.Sprintf("missing credentials for KLAP devices: %s (configure username/password in device config or [klap] section)",
+			strings.Join(missingCredentials, ", ")))
+	}
+
+	if len(unknownDevices) > 0 && !p.options.IgnoreUnknownDevices {
+		errors = append(errors, fmt.Sprintf("unsupported devices (reachable but protocol not recognized): %s (use --ignore-unknown to skip these devices)",
+			strings.Join(unknownDevices, ", ")))
+	}
+
+	if len(errors) > 0 {
+		return fmt.Errorf("%s", strings.Join(errors, "; "))
+	}
+
+	return nil
 }
 
 // doPoll performs a single polling cycle.
@@ -167,6 +299,8 @@ func (p *Poller) ReloadConfig(cfg *config.Config) {
 	defer p.mu.Unlock()
 
 	p.cfg = cfg
-	p.worker = NewWorker(cfg, p.logger)
+	// Clear protocol cache on reload to re-detect new devices
+	p.protocolCache.Clear()
+	p.worker = NewWorker(cfg, p.protocolCache, p.logger)
 	p.logger.Info("configuration reloaded", "devices", len(cfg.Devices))
 }

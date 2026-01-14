@@ -3,6 +3,9 @@ package protocol
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"crypto/sha1"
+	"crypto/sha256"
 	"fmt"
 	"io"
 	"net"
@@ -19,13 +22,23 @@ const (
 	ProtocolLegacy ProtocolType = "legacy"
 
 	// ProtocolKLAP uses HTTP port 80 with binary KLAP handshake.
+	// This indicates default credentials work.
 	ProtocolKLAP ProtocolType = "klap"
+
+	// ProtocolKLAPAuthRequired uses HTTP port 80 with KLAP but requires
+	// custom credentials (default credentials don't work).
+	ProtocolKLAPAuthRequired ProtocolType = "klap_auth_required"
 
 	// ProtocolSecurePassthrough uses HTTP port 80 with JSON-RPC and RSA/AES encryption.
 	ProtocolSecurePassthrough ProtocolType = "securepassthrough"
 
-	// ProtocolUnknown indicates the protocol couldn't be detected.
+	// ProtocolUnknown indicates the device is reachable but protocol couldn't be identified.
+	// This is a configuration error - the device may not be a supported KASA device.
 	ProtocolUnknown ProtocolType = "unknown"
+
+	// ProtocolUnreachable indicates the device could not be reached on any port.
+	// This may be a temporary network issue.
+	ProtocolUnreachable ProtocolType = "unreachable"
 
 	// DetectTimeout is the timeout for protocol detection probes.
 	DetectTimeout = 500 * time.Millisecond
@@ -104,44 +117,44 @@ func (c *ProtocolCache) Clear() {
 	c.cache = make(map[string]ProtocolType)
 }
 
+// httpProbeResult holds the result of an HTTP protocol probe.
+type httpProbeResult struct {
+	proto     ProtocolType
+	reachable bool // true if HTTP port responded (even if protocol unknown)
+}
+
 // detectProtocol probes a device to determine its protocol type.
 func detectProtocol(ctx context.Context, host string) ProtocolType {
 	// Create a context with timeout for detection
 	detectCtx, cancel := context.WithTimeout(ctx, DetectTimeout*3)
 	defer cancel()
 
-	// Try all probes concurrently
-	type probeResult struct {
-		proto ProtocolType
-		ok    bool
-	}
-
-	legacyCh := make(chan probeResult, 1)
-	httpCh := make(chan probeResult, 1)
+	legacyCh := make(chan bool, 1)
+	httpCh := make(chan httpProbeResult, 1)
 
 	// Probe legacy port (TCP 9999)
 	go func() {
-		ok := probeLegacy(detectCtx, host)
-		legacyCh <- probeResult{ProtocolLegacy, ok}
+		legacyCh <- probeLegacy(detectCtx, host)
 	}()
 
 	// Probe HTTP port 80 and determine if KLAP or SecurePassthrough
 	go func() {
-		proto := probeHTTPProtocol(detectCtx, host)
-		httpCh <- probeResult{proto, proto != ProtocolUnknown}
+		httpCh <- probeHTTPProtocol(detectCtx, host)
 	}()
 
 	// Wait for results
 	var legacyOK bool
-	var httpProto ProtocolType = ProtocolUnknown
-	for i := 0; i < 2; i++ {
+	var httpResult httpProbeResult
+	resultsReceived := 0
+waitLoop:
+	for resultsReceived < 2 {
 		select {
-		case r := <-legacyCh:
-			legacyOK = r.ok
-		case r := <-httpCh:
-			httpProto = r.proto
+		case legacyOK = <-legacyCh:
+			resultsReceived++
+		case httpResult = <-httpCh:
+			resultsReceived++
 		case <-detectCtx.Done():
-			break
+			break waitLoop
 		}
 	}
 
@@ -149,11 +162,18 @@ func detectProtocol(ctx context.Context, host string) ProtocolType {
 	if legacyOK {
 		return ProtocolLegacy
 	}
-	if httpProto != ProtocolUnknown {
-		return httpProto
+
+	// Check HTTP result - only if we got a valid protocol
+	switch httpResult.proto {
+	case ProtocolKLAP, ProtocolKLAPAuthRequired, ProtocolSecurePassthrough:
+		return httpResult.proto
+	case ProtocolUnknown:
+		// Device was reachable but protocol not recognized
+		return ProtocolUnknown
 	}
 
-	return ProtocolUnknown
+	// Neither port was reachable - device is offline or unreachable
+	return ProtocolUnreachable
 }
 
 // probeLegacy tests if a device responds on TCP port 9999.
@@ -173,7 +193,9 @@ func probeLegacy(ctx context.Context, host string) bool {
 }
 
 // probeHTTPProtocol tests HTTP port 80 and determines if KLAP or SecurePassthrough.
-func probeHTTPProtocol(ctx context.Context, host string) ProtocolType {
+// For KLAP devices, it also verifies if default credentials work.
+// Returns both the detected protocol and whether the device was reachable.
+func probeHTTPProtocol(ctx context.Context, host string) httpProbeResult {
 	client := &http.Client{
 		Timeout: DetectTimeout * 2, // Give more time for HTTP probes
 	}
@@ -181,45 +203,72 @@ func probeHTTPProtocol(ctx context.Context, host string) ProtocolType {
 	// First, check the server header - "SHIP" indicates SecurePassthrough (TAPO)
 	headReq, err := http.NewRequestWithContext(ctx, "HEAD", fmt.Sprintf("http://%s:%d/", host, SecurePassthroughPort), nil)
 	if err != nil {
-		return ProtocolUnknown
+		return httpProbeResult{proto: ProtocolUnreachable, reachable: false}
 	}
 
 	headResp, err := client.Do(headReq)
 	if err != nil {
-		return ProtocolUnknown
+		return httpProbeResult{proto: ProtocolUnreachable, reachable: false}
 	}
 	headResp.Body.Close()
+
+	// Device is reachable on HTTP - from here on, reachable=true
+	reachable := true
 
 	// Check Server header for SHIP (SecurePassthrough/TAPO devices)
 	serverHeader := headResp.Header.Get("Server")
 	if len(serverHeader) >= 4 && serverHeader[:4] == "SHIP" {
-		return ProtocolSecurePassthrough
+		return httpProbeResult{proto: ProtocolSecurePassthrough, reachable: reachable}
 	}
 
-	// Try KLAP handshake1 endpoint - returns exactly 48 bytes for KLAP devices
+	// Generate a random client seed for the handshake
+	clientSeed := make([]byte, 16)
+	if _, err := rand.Read(clientSeed); err != nil {
+		return httpProbeResult{proto: ProtocolUnknown, reachable: reachable}
+	}
+
+	// Try KLAP handshake1 endpoint
 	klapURL := fmt.Sprintf("http://%s:%d/app/handshake1", host, KLAPPort)
-	klapReq, err := http.NewRequestWithContext(ctx, "POST", klapURL, bytes.NewReader(make([]byte, 16)))
+	klapReq, err := http.NewRequestWithContext(ctx, "POST", klapURL, bytes.NewReader(clientSeed))
 	if err != nil {
-		return ProtocolUnknown
+		return httpProbeResult{proto: ProtocolUnknown, reachable: reachable}
 	}
 	klapReq.Header.Set("Content-Type", "application/octet-stream")
 
 	klapResp, err := client.Do(klapReq)
 	if err != nil {
-		return ProtocolUnknown
+		return httpProbeResult{proto: ProtocolUnknown, reachable: reachable}
 	}
 	defer klapResp.Body.Close()
 
-	if klapResp.StatusCode == http.StatusOK {
-		body, _ := io.ReadAll(io.LimitReader(klapResp.Body, 64))
-		// KLAP returns exactly 48 bytes of binary data (16 byte seed + 32 byte hash)
-		// and it should NOT be JSON or HTML
-		if len(body) == 48 && !isJSONResponse(body) && !isHTMLResponse(body) {
-			return ProtocolKLAP
-		}
+	if klapResp.StatusCode != http.StatusOK {
+		return httpProbeResult{proto: ProtocolUnknown, reachable: reachable}
 	}
 
-	return ProtocolUnknown
+	body, _ := io.ReadAll(io.LimitReader(klapResp.Body, 64))
+	// KLAP returns exactly 48 bytes of binary data (16 byte seed + 32 byte hash)
+	// and it should NOT be JSON or HTML
+	if len(body) != 48 || isJSONResponse(body) || isHTMLResponse(body) {
+		return httpProbeResult{proto: ProtocolUnknown, reachable: reachable}
+	}
+
+	// Parse handshake1 response: 16 byte server seed + 32 byte server hash
+	serverSeed := body[:16]
+	serverHash := body[16:48]
+
+	// Verify if default credentials work by checking the server hash
+	// Server hash = SHA256(localHash + serverSeed + clientSeed)
+	// where localHash = SHA256(SHA1(username) + SHA1(password))
+	defaultLocalHash := computeDetectLocalHash(DefaultKLAPUsername, DefaultKLAPPassword)
+	expectedHash := computeDetectHash(defaultLocalHash, serverSeed, clientSeed)
+
+	if bytes.Equal(serverHash, expectedHash) {
+		// Default credentials work
+		return httpProbeResult{proto: ProtocolKLAP, reachable: reachable}
+	}
+
+	// KLAP device but requires custom credentials
+	return httpProbeResult{proto: ProtocolKLAPAuthRequired, reachable: reachable}
 }
 
 // isJSONResponse checks if the response body looks like JSON.
@@ -244,4 +293,22 @@ func isHTMLResponse(body []byte) bool {
 		return b == '<'
 	}
 	return false
+}
+
+// computeDetectLocalHash computes SHA256(SHA1(username) + SHA1(password)) for detection.
+func computeDetectLocalHash(username, password string) []byte {
+	userHash := sha1.Sum([]byte(username))
+	passHash := sha1.Sum([]byte(password))
+
+	combined := append(userHash[:], passHash[:]...)
+	result := sha256.Sum256(combined)
+	return result[:]
+}
+
+// computeDetectHash computes SHA256(localHash + seed1 + seed2) for detection.
+func computeDetectHash(localHash, seed1, seed2 []byte) []byte {
+	data := append(localHash, seed1...)
+	data = append(data, seed2...)
+	result := sha256.Sum256(data)
+	return result[:]
 }
