@@ -31,6 +31,7 @@ It supports:
   - Sending data to InfluxDB and Prometheus
   - Device control (on/off, brightness, color)
   - Device discovery and status`,
+	SilenceUsage: true, // Don't show usage on runtime errors
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
 		initLogger()
 	},
