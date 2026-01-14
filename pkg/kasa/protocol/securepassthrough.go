@@ -14,6 +14,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/cookiejar"
@@ -34,6 +35,7 @@ type SecurePassthroughTransport struct {
 	host    string
 	port    int
 	timeout time.Duration
+	logger  *slog.Logger
 
 	mu         sync.Mutex
 	client     *http.Client
@@ -61,12 +63,20 @@ func WithSecurePassthroughTimeout(d time.Duration) SecurePassthroughOption {
 	}
 }
 
+// WithSecurePassthroughLogger sets a custom logger.
+func WithSecurePassthroughLogger(logger *slog.Logger) SecurePassthroughOption {
+	return func(t *SecurePassthroughTransport) {
+		t.logger = logger
+	}
+}
+
 // NewSecurePassthroughTransport creates a new SecurePassthrough transport for the given host.
 func NewSecurePassthroughTransport(host string, opts ...SecurePassthroughOption) *SecurePassthroughTransport {
 	t := &SecurePassthroughTransport{
 		host:    host,
 		port:    SecurePassthroughPort,
 		timeout: DefaultTimeout,
+		logger:  slog.Default(),
 	}
 	for _, opt := range opts {
 		opt(t)
@@ -103,26 +113,29 @@ func (t *SecurePassthroughTransport) Connect(ctx context.Context) error {
 
 	// Custom transport to prevent "unsolicited response" warnings
 	// TAPO devices send HTML on idle connections which triggers Go's HTTP client warnings
+	baseTransport := &http.Transport{
+		DisableKeepAlives: true,
+		// Use a custom dialer that sets SO_LINGER to 0 for immediate RST on close
+		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			d := &net.Dialer{Timeout: t.timeout}
+			conn, err := d.DialContext(ctx, network, addr)
+			if err != nil {
+				return nil, err
+			}
+			// Set SO_LINGER to 0 to send RST instead of FIN on close
+			// This prevents the device from sending data after we're done
+			if tcpConn, ok := conn.(*net.TCPConn); ok {
+				tcpConn.SetLinger(0)
+			}
+			return conn, nil
+		},
+	}
+
 	t.client = &http.Client{
 		Timeout: t.timeout,
 		Jar:     jar,
-		Transport: &http.Transport{
-			DisableKeepAlives: true,
-			// Use a custom dialer that sets SO_LINGER to 0 for immediate RST on close
-			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-				d := &net.Dialer{Timeout: t.timeout}
-				conn, err := d.DialContext(ctx, network, addr)
-				if err != nil {
-					return nil, err
-				}
-				// Set SO_LINGER to 0 to send RST instead of FIN on close
-				// This prevents the device from sending data after we're done
-				if tcpConn, ok := conn.(*net.TCPConn); ok {
-					tcpConn.SetLinger(0)
-				}
-				return conn, nil
-			},
-		},
+		// Wrap transport to provide device context for HTTP-level logging
+		Transport: newLoggingRoundTripper(baseTransport, t.host, t.logger),
 	}
 
 	// Perform handshake
@@ -141,8 +154,13 @@ func (t *SecurePassthroughTransport) Close() error {
 
 	// Close idle connections to prevent "unsolicited response" warnings
 	if t.client != nil {
-		if transport, ok := t.client.Transport.(*http.Transport); ok {
-			transport.CloseIdleConnections()
+		switch tr := t.client.Transport.(type) {
+		case *http.Transport:
+			tr.CloseIdleConnections()
+		case *loggingRoundTripper:
+			if httpTr, ok := tr.transport.(*http.Transport); ok {
+				httpTr.CloseIdleConnections()
+			}
 		}
 	}
 

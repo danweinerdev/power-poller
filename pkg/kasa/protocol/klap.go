@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/cookiejar"
 	"sync"
@@ -49,6 +50,7 @@ type KLAPTransport struct {
 	port        int
 	timeout     time.Duration
 	credentials *Credentials
+	logger      *slog.Logger
 
 	mu         sync.Mutex
 	client     *http.Client
@@ -87,6 +89,13 @@ func WithCredentials(creds *Credentials) KLAPOption {
 	}
 }
 
+// WithKLAPLogger sets a custom logger.
+func WithKLAPLogger(logger *slog.Logger) KLAPOption {
+	return func(t *KLAPTransport) {
+		t.logger = logger
+	}
+}
+
 // NewKLAPTransport creates a new KLAP transport for the given host.
 func NewKLAPTransport(host string, opts ...KLAPOption) *KLAPTransport {
 	t := &KLAPTransport{
@@ -94,6 +103,7 @@ func NewKLAPTransport(host string, opts ...KLAPOption) *KLAPTransport {
 		port:        KLAPPort,
 		timeout:     DefaultTimeout,
 		credentials: DefaultCredentials(),
+		logger:      slog.Default(),
 	}
 	for _, opt := range opts {
 		opt(t)
@@ -128,6 +138,8 @@ func (t *KLAPTransport) Connect(ctx context.Context) error {
 	t.client = &http.Client{
 		Timeout: t.timeout,
 		Jar:     jar,
+		// Wrap transport to provide device context for HTTP-level logging
+		Transport: newLoggingRoundTripper(http.DefaultTransport, t.host, t.logger),
 	}
 
 	// Perform handshake

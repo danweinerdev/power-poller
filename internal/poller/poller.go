@@ -51,6 +51,9 @@ func New(cfg *config.Config, pipeline *metrics.Pipeline, logger *slog.Logger, op
 		logger = slog.Default()
 	}
 
+	// Initialize device logger to capture HTTP-level log messages with device context
+	protocol.InitDeviceLogger(logger)
+
 	options := Options{}
 	for _, opt := range opts {
 		opt(&options)
