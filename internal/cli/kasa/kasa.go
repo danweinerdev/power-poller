@@ -48,6 +48,9 @@ func init() {
 		timeCmd,
 		sysinfoCmd,
 		scheduleCmd,
+		countdownCmd,
+		cloudCmd,
+		firmwareCmd,
 	}
 
 	for _, cmd := range hostRequiredCmds {

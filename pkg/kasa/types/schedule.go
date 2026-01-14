@@ -141,3 +141,24 @@ type NextAction struct {
 	SchTime int `json:"schd_sec"` // Seconds until action
 	ErrCode int `json:"err_code"`
 }
+
+// AddRuleResponse is the response from add_rule command.
+type AddRuleResponse struct {
+	Schedule struct {
+		AddRule struct {
+			ID      string `json:"id"`
+			ErrCode int    `json:"err_code"`
+			ErrMsg  string `json:"err_msg,omitempty"`
+		} `json:"add_rule"`
+	} `json:"schedule"`
+}
+
+// EditRuleResponse is the response from edit_rule command.
+type EditRuleResponse struct {
+	Schedule struct {
+		EditRule struct {
+			ErrCode int    `json:"err_code"`
+			ErrMsg  string `json:"err_msg,omitempty"`
+		} `json:"edit_rule"`
+	} `json:"schedule"`
+}
