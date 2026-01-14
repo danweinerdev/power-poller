@@ -122,23 +122,48 @@ func (p *PowerStrip) TurnOff(ctx context.Context) error {
 }
 
 // GetEmeterRealtime returns aggregate energy data for the power strip.
+// It queries all child outlets and sums their power, current, and total consumption.
+// Voltage is averaged across all children since they share the same line.
 func (p *PowerStrip) GetEmeterRealtime(ctx context.Context) (*types.EmeterData, error) {
 	if !p.HasEmeter() {
 		return nil, ErrNoEmeter
 	}
 
-	resp, err := p.SendCommand(ctx, command.GetEmeterRealtime())
-	if err != nil {
-		return nil, err
+	p.mu.RLock()
+	children := p.children
+	p.mu.RUnlock()
+
+	if len(children) == 0 {
+		return nil, fmt.Errorf("no children to aggregate emeter data from")
 	}
 
-	var result types.EmeterRealtimeResponse
-	if err := json.Unmarshal(resp, &result); err != nil {
-		return nil, fmt.Errorf("failed to parse emeter: %w", err)
+	var aggregate types.EmeterData
+	var voltageSum float64
+	var voltageCount int
+
+	for _, child := range children {
+		data, err := child.GetEmeterRealtime(ctx)
+		if err != nil {
+			// Skip children that fail, but continue aggregating others
+			continue
+		}
+
+		aggregate.Power += data.Power
+		aggregate.Current += data.Current
+		aggregate.Total += data.Total
+
+		if data.Voltage > 0 {
+			voltageSum += data.Voltage
+			voltageCount++
+		}
 	}
 
-	normalized := result.Emeter.GetRealtime.Normalize()
-	return &normalized, nil
+	// Average the voltage readings
+	if voltageCount > 0 {
+		aggregate.Voltage = voltageSum / float64(voltageCount)
+	}
+
+	return &aggregate, nil
 }
 
 // GetEmeterDaily returns daily energy stats.
