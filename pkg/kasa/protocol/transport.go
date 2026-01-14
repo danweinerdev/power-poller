@@ -70,6 +70,11 @@ func (t *Transport) Connect(ctx context.Context) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
+	return t.connectLocked(ctx)
+}
+
+// connectLocked establishes connection (caller must hold lock).
+func (t *Transport) connectLocked(ctx context.Context) error {
 	if t.conn != nil {
 		return nil // Already connected
 	}
@@ -148,6 +153,33 @@ func (t *Transport) SendJSON(ctx context.Context, jsonCmd []byte) ([]byte, error
 
 // sendRaw sends raw JSON bytes and receives the response (must hold lock).
 func (t *Transport) sendRaw(ctx context.Context, payload []byte) ([]byte, error) {
+	response, err := t.doSend(ctx, payload)
+	if err != nil {
+		// Some older devices (e.g., HS110) close the connection after each command.
+		// If we got an EOF (conn was set to nil), try reconnecting once and resending.
+		if t.conn == nil {
+			if reconnErr := t.connectLocked(ctx); reconnErr != nil {
+				return nil, fmt.Errorf("reconnect failed after %w: %v", err, reconnErr)
+			}
+
+			// Retry the send
+			response, err = t.doSend(ctx, payload)
+			if err != nil {
+				return nil, err
+			}
+			return response, nil
+		}
+		return nil, err
+	}
+	return response, nil
+}
+
+// doSend performs the actual send/receive (must hold lock).
+func (t *Transport) doSend(ctx context.Context, payload []byte) ([]byte, error) {
+	if t.conn == nil {
+		return nil, fmt.Errorf("not connected")
+	}
+
 	// Set deadline from context or timeout
 	deadline, ok := ctx.Deadline()
 	if !ok {
