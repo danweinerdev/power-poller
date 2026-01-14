@@ -7,8 +7,23 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"sync"
 	"time"
+)
+
+// ProtocolType defines the protocol the mock device should use.
+type ProtocolType string
+
+const (
+	// ProtocolLegacy uses TCP port 9999 with XOR encryption.
+	ProtocolLegacy ProtocolType = "legacy"
+
+	// ProtocolKLAP uses HTTP with binary KLAP handshake.
+	ProtocolKLAP ProtocolType = "klap"
+
+	// ProtocolSecurePassthrough uses HTTP with RSA/AES encryption.
+	ProtocolSecurePassthrough ProtocolType = "securepassthrough"
 )
 
 // DeviceType represents the type of mock device.
@@ -65,6 +80,7 @@ type MockDevice struct {
 
 	// Configuration
 	DeviceType   DeviceType
+	Protocol     ProtocolType
 	Capabilities DeviceCapabilities
 	Alias        string
 	Model        string
@@ -96,11 +112,19 @@ type MockDevice struct {
 	ReceivedCommands []CommandRecord
 	commandCount     int
 
-	// Networking
+	// Networking - Legacy TCP
 	listener   net.Listener
 	port       int
 	running    bool
 	shutdownCh chan struct{}
+
+	// Networking - HTTP (KLAP/SecurePassthrough)
+	httpServer *http.Server
+	httpPort   int
+
+	// Protocol-specific state
+	klapState *KLAPState
+	spState   *SecurePassthroughState
 
 	// Custom response overrides
 	responseOverrides map[string]interface{}
@@ -113,6 +137,7 @@ type Option func(*MockDevice)
 func New(opts ...Option) *MockDevice {
 	d := &MockDevice{
 		DeviceType:        DeviceTypePlug,
+		Protocol:          ProtocolLegacy,
 		Alias:             "Mock Device",
 		Model:             "HS110(US)",
 		MAC:               "AA:BB:CC:DD:EE:FF",
@@ -144,6 +169,22 @@ func New(opts ...Option) *MockDevice {
 
 // Start begins listening for connections.
 func (d *MockDevice) Start() error {
+	d.mu.Lock()
+	protocol := d.Protocol
+	d.mu.Unlock()
+
+	switch protocol {
+	case ProtocolKLAP:
+		return d.startHTTP(d.handleKLAP)
+	case ProtocolSecurePassthrough:
+		return d.startHTTP(d.handleSecurePassthrough)
+	default:
+		return d.startLegacy()
+	}
+}
+
+// startLegacy starts the legacy TCP server.
+func (d *MockDevice) startLegacy() error {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return fmt.Errorf("failed to start listener: %w", err)
@@ -156,6 +197,27 @@ func (d *MockDevice) Start() error {
 	d.mu.Unlock()
 
 	go d.acceptLoop()
+	return nil
+}
+
+// startHTTP starts an HTTP server for KLAP or SecurePassthrough.
+func (d *MockDevice) startHTTP(handler http.HandlerFunc) error {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return fmt.Errorf("failed to start HTTP listener: %w", err)
+	}
+
+	d.mu.Lock()
+	d.httpPort = listener.Addr().(*net.TCPAddr).Port
+	d.port = d.httpPort // Use same port field for compatibility
+	d.running = true
+	d.httpServer = &http.Server{Handler: handler}
+	d.mu.Unlock()
+
+	go func() {
+		d.httpServer.Serve(listener)
+	}()
+
 	return nil
 }
 
@@ -184,11 +246,27 @@ func (d *MockDevice) Stop() error {
 		return nil
 	}
 	d.running = false
-	close(d.shutdownCh)
+
+	// Close shutdown channel if it exists and isn't already closed
+	select {
+	case <-d.shutdownCh:
+		// Already closed
+	default:
+		close(d.shutdownCh)
+	}
+
+	httpServer := d.httpServer
+	listener := d.listener
 	d.mu.Unlock()
 
-	if d.listener != nil {
-		return d.listener.Close()
+	// Shutdown HTTP server if running
+	if httpServer != nil {
+		httpServer.Close()
+	}
+
+	// Close legacy listener if running
+	if listener != nil {
+		return listener.Close()
 	}
 	return nil
 }
