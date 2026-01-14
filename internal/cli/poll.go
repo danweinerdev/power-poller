@@ -18,6 +18,8 @@ var (
 	pidFile       string
 	echoMode      bool
 	ignoreUnknown bool
+	runFor        int
+	runOnce       bool
 )
 
 var pollCmd = &cobra.Command{
@@ -30,7 +32,9 @@ interval and sending metrics to configured backends (InfluxDB, Prometheus).
 
 Use -o/--foreground to run in foreground mode (no daemonization).
 Use --echo to output metrics to stdout instead of backends (for debugging).
-Use --ignore-unknown to skip devices that are reachable but have unsupported protocols.`,
+Use --ignore-unknown to skip devices that are reachable but have unsupported protocols.
+Use --run-for=N to run for N polling iterations then exit.
+Use --run-once to run a single polling iteration then exit (same as --run-for=1).`,
 	RunE: runPoll,
 }
 
@@ -39,6 +43,8 @@ func init() {
 	pollCmd.Flags().StringVar(&pidFile, "pid-file", "", "PID file path")
 	pollCmd.Flags().BoolVar(&echoMode, "echo", false, "echo metrics to stdout (debug mode)")
 	pollCmd.Flags().BoolVar(&ignoreUnknown, "ignore-unknown", false, "ignore devices with unrecognized protocols")
+	pollCmd.Flags().IntVar(&runFor, "run-for", 0, "run for N iterations then exit (0 = run indefinitely)")
+	pollCmd.Flags().BoolVar(&runOnce, "run-once", false, "run a single iteration then exit (same as --run-for=1)")
 
 	rootCmd.AddCommand(pollCmd)
 }
@@ -113,8 +119,20 @@ func runPoll(cmd *cobra.Command, args []string) error {
 		}
 	}()
 
+	// Determine max iterations
+	maxIterations := runFor
+	if runOnce {
+		maxIterations = 1
+	}
+
 	// Create and run poller
-	p := poller.New(cfg, pipeline, log, poller.WithIgnoreUnknownDevices(ignoreUnknown))
+	pollerOpts := []func(*poller.Options){
+		poller.WithIgnoreUnknownDevices(ignoreUnknown),
+	}
+	if maxIterations > 0 {
+		pollerOpts = append(pollerOpts, poller.WithMaxIterations(maxIterations))
+	}
+	p := poller.New(cfg, pipeline, log, pollerOpts...)
 
 	// Handle config reload
 	go func() {

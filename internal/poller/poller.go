@@ -34,6 +34,10 @@ type Options struct {
 	// are reachable but have an unrecognized protocol. If false (default),
 	// the poller will error on startup if any device is reachable but unsupported.
 	IgnoreUnknownDevices bool
+
+	// MaxIterations limits the number of poll cycles. If 0 (default), the poller
+	// runs indefinitely until the context is cancelled.
+	MaxIterations int
 }
 
 // Stats holds polling statistics.
@@ -77,7 +81,16 @@ func WithIgnoreUnknownDevices(ignore bool) func(*Options) {
 	}
 }
 
-// Run starts the polling loop and blocks until context is cancelled.
+// WithMaxIterations sets the maximum number of poll iterations.
+// If n <= 0, the poller runs indefinitely.
+func WithMaxIterations(n int) func(*Options) {
+	return func(o *Options) {
+		o.MaxIterations = n
+	}
+}
+
+// Run starts the polling loop and blocks until context is cancelled
+// or MaxIterations is reached (if configured).
 func (p *Poller) Run(ctx context.Context) error {
 	p.mu.Lock()
 	if p.running {
@@ -94,10 +107,13 @@ func (p *Poller) Run(ctx context.Context) error {
 	}()
 
 	interval := p.cfg.Global.PollInterval.Duration
-	p.logger.Info("starting poller",
-		"interval", interval,
-		"devices", len(p.cfg.Devices),
-	)
+	maxIter := p.options.MaxIterations
+
+	logAttrs := []any{"interval", interval, "devices", len(p.cfg.Devices)}
+	if maxIter > 0 {
+		logAttrs = append(logAttrs, "max_iterations", maxIter)
+	}
+	p.logger.Info("starting poller", logAttrs...)
 
 	// Detect protocols for all devices at startup
 	if err := p.detectProtocols(ctx); err != nil {
@@ -106,6 +122,13 @@ func (p *Poller) Run(ctx context.Context) error {
 
 	// Do initial poll immediately
 	p.doPoll(ctx)
+	iteration := 1
+
+	// Check if we've reached max iterations after initial poll
+	if maxIter > 0 && iteration >= maxIter {
+		p.logger.Info("max iterations reached", "iterations", iteration)
+		return nil
+	}
 
 	// Start ticker for subsequent polls
 	ticker := time.NewTicker(interval)
@@ -118,6 +141,13 @@ func (p *Poller) Run(ctx context.Context) error {
 			return ctx.Err()
 		case <-ticker.C:
 			p.doPoll(ctx)
+			iteration++
+
+			// Check if we've reached max iterations
+			if maxIter > 0 && iteration >= maxIter {
+				p.logger.Info("max iterations reached", "iterations", iteration)
+				return nil
+			}
 		}
 	}
 }
