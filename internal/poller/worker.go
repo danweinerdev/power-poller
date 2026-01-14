@@ -22,20 +22,22 @@ type DeviceResult struct {
 
 // Worker polls devices and generates metrics.
 type Worker struct {
-	cfg     *config.Config
-	timeout time.Duration
-	logger  *slog.Logger
+	cfg           *config.Config
+	timeout       time.Duration
+	logger        *slog.Logger
+	protocolCache *protocol.ProtocolCache
 }
 
 // NewWorker creates a new device polling worker.
-func NewWorker(cfg *config.Config, logger *slog.Logger) *Worker {
+func NewWorker(cfg *config.Config, cache *protocol.ProtocolCache, logger *slog.Logger) *Worker {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	return &Worker{
-		cfg:     cfg,
-		timeout: cfg.Global.DeviceTimeout.Duration,
-		logger:  logger,
+		cfg:           cfg,
+		timeout:       cfg.Global.DeviceTimeout.Duration,
+		logger:        logger,
+		protocolCache: cache,
 	}
 }
 
@@ -80,12 +82,34 @@ func (w *Worker) pollDevice(ctx context.Context, deviceName string, devCfg confi
 	ctx, cancel := context.WithTimeout(ctx, w.timeout)
 	defer cancel()
 
-	// Connect to device
-	opts := []protocol.TransportOption{
-		protocol.WithTimeout(w.timeout),
+	// Connect to device with protocol cache and timeout options
+	loadOpts := []device.LoadOption{
+		device.WithProtocolCache(w.protocolCache),
+		device.WithTransportOptions(protocol.WithTimeout(w.timeout)),
+		device.WithKLAPOptions(protocol.WithKLAPTimeout(w.timeout)),
+		device.WithSecurePassthroughOptions(protocol.WithSecurePassthroughTimeout(w.timeout)),
 	}
 
-	dev, err := device.Load(ctx, devCfg.Address, opts...)
+	// Apply per-device protocol setting
+	switch devCfg.Protocol {
+	case "legacy":
+		loadOpts = append(loadOpts, device.WithForceProtocol(protocol.ProtocolLegacy))
+	case "klap":
+		loadOpts = append(loadOpts, device.WithForceProtocol(protocol.ProtocolKLAP))
+	case "securepassthrough":
+		loadOpts = append(loadOpts, device.WithForceProtocol(protocol.ProtocolSecurePassthrough))
+	// Empty string = auto-detect (default)
+	}
+
+	// Apply per-device or global KLAP credentials
+	if username, password, ok := w.cfg.GetDeviceCredentials(deviceName); ok {
+		loadOpts = append(loadOpts, device.WithCredentials(&protocol.Credentials{
+			Username: username,
+			Password: password,
+		}))
+	}
+
+	dev, err := device.Load(ctx, devCfg.Address, loadOpts...)
 	if err != nil {
 		result.Error = err
 		result.Duration = time.Since(start)

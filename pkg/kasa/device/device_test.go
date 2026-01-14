@@ -25,7 +25,7 @@ func TestLoad_Plug(t *testing.T) {
 	defer cancel()
 
 	dev, err := device.Load(ctx, mock.Address(),
-		protocol.WithTimeout(2*time.Second),
+		device.WithTransportOptions(protocol.WithTimeout(2*time.Second)),
 	)
 	if err != nil {
 		t.Fatalf("failed to load device: %v", err)
@@ -124,9 +124,9 @@ func TestPlug_Emeter(t *testing.T) {
 	if data.Power != 101.22 {
 		t.Errorf("power = %v, want 101.22", data.Power)
 	}
-	// Total is returned as integer from mock (1234), accept approximate
-	if data.Total < 1234 || data.Total > 1235 {
-		t.Errorf("total = %v, want ~1234", data.Total)
+	// Total is returned as total_wh from mock (1234 Wh), normalized to kWh (~1.234)
+	if data.Total < 1.23 || data.Total > 1.24 {
+		t.Errorf("total = %v, want ~1.234 kWh", data.Total)
 	}
 }
 

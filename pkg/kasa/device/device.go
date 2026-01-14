@@ -93,15 +93,22 @@ type ParentDevice interface {
 // BaseDevice provides common functionality for all device types.
 type BaseDevice struct {
 	mu        sync.RWMutex
-	transport *protocol.Transport
+	transport protocol.Transporter
 	sysinfo   *types.SysInfo
 	devType   types.DeviceType
 }
 
-// NewBaseDevice creates a new base device.
+// NewBaseDevice creates a new base device with legacy TCP/XOR transport.
 func NewBaseDevice(host string, opts ...protocol.TransportOption) *BaseDevice {
 	return &BaseDevice{
 		transport: protocol.NewTransport(host, opts...),
+	}
+}
+
+// NewBaseDeviceWithTransport creates a new base device with a specific transport.
+func NewBaseDeviceWithTransport(transport protocol.Transporter) *BaseDevice {
+	return &BaseDevice{
+		transport: transport,
 	}
 }
 
@@ -130,6 +137,11 @@ func (d *BaseDevice) Host() string {
 
 // Update refreshes device state from hardware.
 func (d *BaseDevice) Update(ctx context.Context) error {
+	// Check if this is a SecurePassthrough (TAPO) transport
+	if _, ok := d.transport.(*protocol.SecurePassthroughTransport); ok {
+		return d.updateTapo(ctx)
+	}
+
 	resp, err := d.SendCommand(ctx, command.GetSysInfo())
 	if err != nil {
 		return err
@@ -146,6 +158,36 @@ func (d *BaseDevice) Update(ctx context.Context) error {
 	d.mu.Unlock()
 
 	return nil
+}
+
+// updateTapo refreshes device state using TAPO commands.
+func (d *BaseDevice) updateTapo(ctx context.Context) error {
+	resp, err := d.SendCommand(ctx, command.TapoGetDeviceInfo())
+	if err != nil {
+		return err
+	}
+
+	var result types.TapoDeviceInfoResponse
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return fmt.Errorf("failed to parse device info: %w", err)
+	}
+
+	if result.ErrorCode != 0 {
+		return fmt.Errorf("device error: code %d", result.ErrorCode)
+	}
+
+	d.mu.Lock()
+	d.sysinfo = result.Result.ToSysInfo()
+	d.devType = d.sysinfo.DetectDeviceType()
+	d.mu.Unlock()
+
+	return nil
+}
+
+// IsTapoProtocol returns true if the device uses the TAPO (SecurePassthrough) protocol.
+func (d *BaseDevice) IsTapoProtocol() bool {
+	_, ok := d.transport.(*protocol.SecurePassthroughTransport)
+	return ok
 }
 
 // SendCommand sends a command and returns raw response.

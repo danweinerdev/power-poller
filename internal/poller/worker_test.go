@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/danweinerdev/go-power-poller/internal/config"
+	"github.com/danweinerdev/go-power-poller/pkg/kasa/protocol"
 	"github.com/danweinerdev/go-power-poller/pkg/mockdevice"
 )
 
@@ -13,7 +14,7 @@ func TestWorker_NewWorker(t *testing.T) {
 	cfg := newTestConfig()
 
 	t.Run("with nil logger", func(t *testing.T) {
-		w := NewWorker(cfg, nil)
+		w := NewWorker(cfg, protocol.NewProtocolCache(), nil)
 		if w == nil {
 			t.Fatal("NewWorker() returned nil")
 		}
@@ -28,7 +29,7 @@ func TestWorker_NewWorker(t *testing.T) {
 
 func TestWorker_PollAll_NoDevices(t *testing.T) {
 	cfg := newTestConfig()
-	w := NewWorker(cfg, nil)
+	w := NewWorker(cfg, protocol.NewProtocolCache(), nil)
 
 	ctx := context.Background()
 	results := w.PollAll(ctx)
@@ -54,7 +55,7 @@ func TestWorker_PollAll_Success(t *testing.T) {
 		Measurements: []string{"power_metrics"},
 	}
 
-	w := NewWorker(cfg, nil)
+	w := NewWorker(cfg, protocol.NewProtocolCache(), nil)
 	ctx := context.Background()
 
 	results := w.PollAll(ctx)
@@ -108,7 +109,7 @@ func TestWorker_PollAll_MultipleDevices(t *testing.T) {
 		Measurements: []string{"power_metrics"},
 	}
 
-	w := NewWorker(cfg, nil)
+	w := NewWorker(cfg, protocol.NewProtocolCache(), nil)
 	ctx := context.Background()
 
 	results := w.PollAll(ctx)
@@ -145,7 +146,7 @@ func TestWorker_PollAll_PartialFailure(t *testing.T) {
 		Measurements: []string{"power_metrics"},
 	}
 
-	w := NewWorker(cfg, nil)
+	w := NewWorker(cfg, protocol.NewProtocolCache(), nil)
 	ctx := context.Background()
 
 	results := w.PollAll(ctx)
@@ -190,7 +191,7 @@ func TestWorker_PollAll_ContextTimeout(t *testing.T) {
 		Measurements: []string{"power_metrics"},
 	}
 
-	w := NewWorker(cfg, nil)
+	w := NewWorker(cfg, protocol.NewProtocolCache(), nil)
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
 
@@ -220,7 +221,7 @@ func TestWorker_PollDevice_NoEmeter(t *testing.T) {
 		Measurements: []string{"power_metrics"},
 	}
 
-	w := NewWorker(cfg, nil)
+	w := NewWorker(cfg, protocol.NewProtocolCache(), nil)
 	ctx := context.Background()
 
 	results := w.PollAll(ctx)
@@ -259,7 +260,7 @@ func TestWorker_PollDevice_EmeterData(t *testing.T) {
 		Tags:         map[string]string{"location": "office"},
 	}
 
-	w := NewWorker(cfg, nil)
+	w := NewWorker(cfg, protocol.NewProtocolCache(), nil)
 	ctx := context.Background()
 
 	results := w.PollAll(ctx)
@@ -331,7 +332,7 @@ func TestWorker_PollChildren(t *testing.T) {
 		},
 	}
 
-	w := NewWorker(cfg, nil)
+	w := NewWorker(cfg, protocol.NewProtocolCache(), nil)
 	ctx := context.Background()
 
 	results := w.PollAll(ctx)
@@ -379,7 +380,7 @@ func TestWorker_PollChildren_IndexOutOfRange(t *testing.T) {
 		},
 	}
 
-	w := NewWorker(cfg, nil)
+	w := NewWorker(cfg, protocol.NewProtocolCache(), nil)
 	ctx := context.Background()
 
 	results := w.PollAll(ctx)
@@ -408,7 +409,7 @@ func TestWorker_PollDevice_ConnectionError(t *testing.T) {
 		Measurements: []string{"power_metrics"},
 	}
 
-	w := NewWorker(cfg, nil)
+	w := NewWorker(cfg, protocol.NewProtocolCache(), nil)
 	ctx := context.Background()
 
 	results := w.PollAll(ctx)
@@ -442,7 +443,7 @@ func TestWorker_PollDevice_MultipleMeasurements(t *testing.T) {
 		Measurements: []string{"power_metrics", "energy_stats"},
 	}
 
-	w := NewWorker(cfg, nil)
+	w := NewWorker(cfg, protocol.NewProtocolCache(), nil)
 	ctx := context.Background()
 
 	results := w.PollAll(ctx)
