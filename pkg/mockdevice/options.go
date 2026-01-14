@@ -191,3 +191,23 @@ func WithColorTempCapability(enabled bool) Option {
 		d.Capabilities.HasColorTemp = enabled
 	}
 }
+
+// WithProtocol sets the communication protocol for the mock device.
+func WithProtocol(proto ProtocolType) Option {
+	return func(d *MockDevice) {
+		d.Protocol = proto
+		// Update model for TAPO devices
+		if proto == ProtocolSecurePassthrough {
+			switch d.DeviceType {
+			case DeviceTypePlug:
+				d.Model = "EP25"
+			case DeviceTypeBulb:
+				d.Model = "L510E"
+			case DeviceTypeLightStrip:
+				d.Model = "L900"
+			case DeviceTypePowerStrip:
+				d.Model = "P300"
+			}
+		}
+	}
+}
