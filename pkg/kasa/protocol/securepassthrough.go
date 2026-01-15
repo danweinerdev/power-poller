@@ -32,10 +32,12 @@ const (
 
 // SecurePassthroughTransport handles HTTP/SecurePassthrough communication with TAPO devices.
 type SecurePassthroughTransport struct {
-	host    string
-	port    int
-	timeout time.Duration
-	logger  *slog.Logger
+	host         string
+	port         int
+	timeout      time.Duration
+	retries      int
+	retryBackoff time.Duration
+	logger       *slog.Logger
 
 	mu         sync.Mutex
 	client     *http.Client
@@ -70,13 +72,31 @@ func WithSecurePassthroughLogger(logger *slog.Logger) SecurePassthroughOption {
 	}
 }
 
+// WithSecurePassthroughRetries sets the number of retry attempts for failed connections.
+// Set to 0 to disable retries.
+func WithSecurePassthroughRetries(n int) SecurePassthroughOption {
+	return func(t *SecurePassthroughTransport) {
+		t.retries = n
+	}
+}
+
+// WithSecurePassthroughRetryBackoff sets the initial backoff duration for retries.
+// Each subsequent retry doubles this duration (exponential backoff).
+func WithSecurePassthroughRetryBackoff(d time.Duration) SecurePassthroughOption {
+	return func(t *SecurePassthroughTransport) {
+		t.retryBackoff = d
+	}
+}
+
 // NewSecurePassthroughTransport creates a new SecurePassthrough transport for the given host.
 func NewSecurePassthroughTransport(host string, opts ...SecurePassthroughOption) *SecurePassthroughTransport {
 	t := &SecurePassthroughTransport{
-		host:    host,
-		port:    SecurePassthroughPort,
-		timeout: DefaultTimeout,
-		logger:  slog.Default(),
+		host:         host,
+		port:         SecurePassthroughPort,
+		timeout:      DefaultTimeout,
+		retries:      DefaultRetries,
+		retryBackoff: DefaultRetryBackoff,
+		logger:       slog.Default(),
 	}
 	for _, opt := range opts {
 		opt(t)
@@ -191,6 +211,7 @@ func (t *SecurePassthroughTransport) Send(ctx context.Context, cmd interface{}) 
 }
 
 // SendJSON sends a raw JSON command and receives the response.
+// It implements exponential backoff retries for connection failures.
 func (t *SecurePassthroughTransport) SendJSON(ctx context.Context, jsonCmd []byte) ([]byte, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -199,6 +220,58 @@ func (t *SecurePassthroughTransport) SendJSON(ctx context.Context, jsonCmd []byt
 		return nil, fmt.Errorf("not connected")
 	}
 
+	var lastErr error
+	backoff := t.retryBackoff
+
+	// Attempt initial send plus configured retries
+	maxAttempts := 1 + t.retries
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		// Check context before each attempt
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+
+		// Wait before retry (skip on first attempt)
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(backoff):
+			}
+
+			// Exponential backoff with cap
+			backoff *= 2
+			if backoff > MaxRetryBackoff {
+				backoff = MaxRetryBackoff
+			}
+
+			// Reconnect if needed
+			if !t.connected {
+				if err := t.reconnectLocked(ctx); err != nil {
+					lastErr = fmt.Errorf("reconnect failed (attempt %d/%d): %w", attempt+1, maxAttempts, err)
+					continue
+				}
+			}
+		}
+
+		result, err := t.sendRequestLocked(ctx, jsonCmd)
+		if err == nil {
+			return result, nil
+		}
+
+		lastErr = err
+
+		// Check for session expiration errors that might be recoverable
+		if !t.connected {
+			continue // Will attempt reconnect on next iteration
+		}
+	}
+
+	return nil, fmt.Errorf("all %d attempts failed: %w", maxAttempts, lastErr)
+}
+
+// sendRequestLocked sends a single encrypted request. Must be called with mu held.
+func (t *SecurePassthroughTransport) sendRequestLocked(ctx context.Context, jsonCmd []byte) ([]byte, error) {
 	// Encrypt the payload
 	encrypted, err := t.encrypt(jsonCmd)
 	if err != nil {
@@ -279,6 +352,51 @@ func (t *SecurePassthroughTransport) SendJSON(ctx context.Context, jsonCmd []byt
 	}
 
 	return decrypted, nil
+}
+
+// reconnectLocked performs a full reconnection. Must be called with mu held.
+func (t *SecurePassthroughTransport) reconnectLocked(ctx context.Context) error {
+	// Generate new RSA key pair
+	privateKey, err := rsa.GenerateKey(rand.Reader, RSAKeySize)
+	if err != nil {
+		return fmt.Errorf("failed to generate RSA key: %w", err)
+	}
+	t.privateKey = privateKey
+
+	// Create new HTTP client with cookie jar
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		return fmt.Errorf("failed to create cookie jar: %w", err)
+	}
+
+	baseTransport := &http.Transport{
+		DisableKeepAlives: true,
+		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			d := &net.Dialer{Timeout: t.timeout}
+			conn, err := d.DialContext(ctx, network, addr)
+			if err != nil {
+				return nil, err
+			}
+			if tcpConn, ok := conn.(*net.TCPConn); ok {
+				tcpConn.SetLinger(0)
+			}
+			return conn, nil
+		},
+	}
+
+	t.client = &http.Client{
+		Timeout:   t.timeout,
+		Jar:       jar,
+		Transport: newLoggingRoundTripper(baseTransport, t.host, t.logger),
+	}
+
+	// Perform handshake
+	if err := t.handshake(ctx); err != nil {
+		return err
+	}
+
+	t.connected = true
+	return nil
 }
 
 // handshake performs the SecurePassthrough handshake and login.

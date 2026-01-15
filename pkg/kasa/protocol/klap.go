@@ -46,11 +46,13 @@ func DefaultCredentials() *Credentials {
 
 // KLAPTransport handles HTTP/KLAP communication with newer KASA devices.
 type KLAPTransport struct {
-	host        string
-	port        int
-	timeout     time.Duration
-	credentials *Credentials
-	logger      *slog.Logger
+	host         string
+	port         int
+	timeout      time.Duration
+	retries      int
+	retryBackoff time.Duration
+	credentials  *Credentials
+	logger       *slog.Logger
 
 	mu         sync.Mutex
 	client     *http.Client
@@ -96,14 +98,32 @@ func WithKLAPLogger(logger *slog.Logger) KLAPOption {
 	}
 }
 
+// WithKLAPRetries sets the number of retry attempts for failed connections.
+// Set to 0 to disable retries.
+func WithKLAPRetries(n int) KLAPOption {
+	return func(t *KLAPTransport) {
+		t.retries = n
+	}
+}
+
+// WithKLAPRetryBackoff sets the initial backoff duration for retries.
+// Each subsequent retry doubles this duration (exponential backoff).
+func WithKLAPRetryBackoff(d time.Duration) KLAPOption {
+	return func(t *KLAPTransport) {
+		t.retryBackoff = d
+	}
+}
+
 // NewKLAPTransport creates a new KLAP transport for the given host.
 func NewKLAPTransport(host string, opts ...KLAPOption) *KLAPTransport {
 	t := &KLAPTransport{
-		host:        host,
-		port:        KLAPPort,
-		timeout:     DefaultTimeout,
-		credentials: DefaultCredentials(),
-		logger:      slog.Default(),
+		host:         host,
+		port:         KLAPPort,
+		timeout:      DefaultTimeout,
+		retries:      DefaultRetries,
+		retryBackoff: DefaultRetryBackoff,
+		credentials:  DefaultCredentials(),
+		logger:       slog.Default(),
 	}
 	for _, opt := range opts {
 		opt(t)
@@ -184,6 +204,7 @@ func (t *KLAPTransport) Send(ctx context.Context, cmd interface{}) ([]byte, erro
 }
 
 // SendJSON sends a raw JSON command and receives the response.
+// It implements exponential backoff retries for connection failures.
 func (t *KLAPTransport) SendJSON(ctx context.Context, jsonCmd []byte) ([]byte, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -192,53 +213,99 @@ func (t *KLAPTransport) SendJSON(ctx context.Context, jsonCmd []byte) ([]byte, e
 		return nil, fmt.Errorf("not connected")
 	}
 
-	// Try sending the request, with one automatic retry on session expiration
-	resp, err := t.sendRequestLocked(ctx, jsonCmd)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
+	var lastErr error
+	backoff := t.retryBackoff
 
-	if resp.StatusCode == http.StatusForbidden {
-		// Session expired - attempt to reconnect and retry once
-		resp.Body.Close()
-		t.connected = false
-
-		if err := t.handshake(ctx); err != nil {
-			return nil, fmt.Errorf("session expired, reconnect failed: %w", err)
+	// Attempt initial send plus configured retries
+	maxAttempts := 1 + t.retries
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		// Check context before each attempt
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
 		}
-		t.connected = true
 
-		// Retry the request
-		resp, err = t.sendRequestLocked(ctx, jsonCmd)
+		// Wait before retry (skip on first attempt)
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(backoff):
+			}
+
+			// Exponential backoff with cap
+			backoff *= 2
+			if backoff > MaxRetryBackoff {
+				backoff = MaxRetryBackoff
+			}
+
+			// Reconnect if needed
+			if !t.connected {
+				if err := t.handshake(ctx); err != nil {
+					lastErr = fmt.Errorf("reconnect failed (attempt %d/%d): %w", attempt+1, maxAttempts, err)
+					continue
+				}
+				t.connected = true
+			}
+		}
+
+		resp, err := t.sendRequestLocked(ctx, jsonCmd)
 		if err != nil {
-			return nil, err
+			lastErr = err
+			continue
 		}
-		defer resp.Body.Close()
 
+		// Handle session expiration (403)
 		if resp.StatusCode == http.StatusForbidden {
+			resp.Body.Close()
 			t.connected = false
-			return nil, fmt.Errorf("session expired after reconnect (403)")
+
+			// Try to reconnect and retry within this attempt
+			if err := t.handshake(ctx); err != nil {
+				lastErr = fmt.Errorf("session expired, reconnect failed: %w", err)
+				continue
+			}
+			t.connected = true
+
+			// Retry the request immediately after handshake
+			resp, err = t.sendRequestLocked(ctx, jsonCmd)
+			if err != nil {
+				lastErr = err
+				continue
+			}
+
+			if resp.StatusCode == http.StatusForbidden {
+				resp.Body.Close()
+				t.connected = false
+				lastErr = fmt.Errorf("session expired after reconnect (403)")
+				continue
+			}
 		}
+
+		if resp.StatusCode != http.StatusOK {
+			resp.Body.Close()
+			t.connected = false
+			lastErr = fmt.Errorf("unexpected status: %d", resp.StatusCode)
+			continue
+		}
+
+		// Read and decrypt response
+		body, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			lastErr = fmt.Errorf("failed to read response: %w", err)
+			continue
+		}
+
+		decrypted, err := t.decrypt(body)
+		if err != nil {
+			lastErr = fmt.Errorf("failed to decrypt: %w", err)
+			continue
+		}
+
+		return decrypted, nil
 	}
 
-	if resp.StatusCode != http.StatusOK {
-		t.connected = false
-		return nil, fmt.Errorf("unexpected status: %d", resp.StatusCode)
-	}
-
-	// Read and decrypt response
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response: %w", err)
-	}
-
-	decrypted, err := t.decrypt(body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to decrypt: %w", err)
-	}
-
-	return decrypted, nil
+	return nil, fmt.Errorf("all %d attempts failed: %w", maxAttempts, lastErr)
 }
 
 // sendRequestLocked sends an encrypted request. Must be called with mu held.

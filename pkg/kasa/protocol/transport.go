@@ -18,13 +18,24 @@ const (
 
 	// ConnectTimeout is the timeout for establishing connections.
 	ConnectTimeout = 10 * time.Second
+
+	// DefaultRetries is the default number of retry attempts for failed connections.
+	DefaultRetries = 3
+
+	// DefaultRetryBackoff is the initial backoff duration for retries.
+	DefaultRetryBackoff = 500 * time.Millisecond
+
+	// MaxRetryBackoff caps the exponential backoff duration.
+	MaxRetryBackoff = 10 * time.Second
 )
 
 // Transport handles TCP communication with KASA devices.
 type Transport struct {
-	host    string
-	port    int
-	timeout time.Duration
+	host         string
+	port         int
+	timeout      time.Duration
+	retries      int
+	retryBackoff time.Duration
 
 	mu   sync.Mutex
 	conn net.Conn
@@ -47,12 +58,30 @@ func WithTimeout(d time.Duration) TransportOption {
 	}
 }
 
+// WithRetries sets the number of retry attempts for failed connections.
+// Set to 0 to disable retries.
+func WithRetries(n int) TransportOption {
+	return func(t *Transport) {
+		t.retries = n
+	}
+}
+
+// WithRetryBackoff sets the initial backoff duration for retries.
+// Each subsequent retry doubles this duration (exponential backoff).
+func WithRetryBackoff(d time.Duration) TransportOption {
+	return func(t *Transport) {
+		t.retryBackoff = d
+	}
+}
+
 // NewTransport creates a new Transport for the given host.
 func NewTransport(host string, opts ...TransportOption) *Transport {
 	t := &Transport{
-		host:    host,
-		port:    DefaultPort,
-		timeout: DefaultTimeout,
+		host:         host,
+		port:         DefaultPort,
+		timeout:      DefaultTimeout,
+		retries:      DefaultRetries,
+		retryBackoff: DefaultRetryBackoff,
 	}
 	for _, opt := range opts {
 		opt(t)
@@ -152,26 +181,54 @@ func (t *Transport) SendJSON(ctx context.Context, jsonCmd []byte) ([]byte, error
 }
 
 // sendRaw sends raw JSON bytes and receives the response (must hold lock).
+// It implements exponential backoff retries for connection failures.
 func (t *Transport) sendRaw(ctx context.Context, payload []byte) ([]byte, error) {
-	response, err := t.doSend(ctx, payload)
-	if err != nil {
-		// Some older devices (e.g., HS110) close the connection after each command.
-		// If we got an EOF (conn was set to nil), try reconnecting once and resending.
-		if t.conn == nil {
-			if reconnErr := t.connectLocked(ctx); reconnErr != nil {
-				return nil, fmt.Errorf("reconnect failed after %w: %v", err, reconnErr)
+	var lastErr error
+	backoff := t.retryBackoff
+
+	// Attempt initial send plus configured retries
+	maxAttempts := 1 + t.retries
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		// Check context before each attempt
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+
+		// Wait before retry (skip on first attempt)
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(backoff):
 			}
 
-			// Retry the send
-			response, err = t.doSend(ctx, payload)
-			if err != nil {
-				return nil, err
+			// Exponential backoff with cap
+			backoff *= 2
+			if backoff > MaxRetryBackoff {
+				backoff = MaxRetryBackoff
 			}
+		}
+
+		// Ensure we have a connection
+		if t.conn == nil {
+			if err := t.connectLocked(ctx); err != nil {
+				lastErr = fmt.Errorf("connect failed (attempt %d/%d): %w", attempt+1, maxAttempts, err)
+				continue
+			}
+		}
+
+		response, err := t.doSend(ctx, payload)
+		if err == nil {
 			return response, nil
 		}
-		return nil, err
+
+		lastErr = err
+
+		// Connection was closed (EOF or other error) - will reconnect on next attempt
+		// t.conn is set to nil by doSend on failure
 	}
-	return response, nil
+
+	return nil, fmt.Errorf("all %d attempts failed: %w", maxAttempts, lastErr)
 }
 
 // doSend performs the actual send/receive (must hold lock).
