@@ -139,11 +139,13 @@ func (w *Worker) pollDevice(ctx context.Context, deviceName string, devCfg confi
 	model := dev.Model()
 	hwVersion := ""
 	swVersion := ""
+	deviceID := ""
 	deviceType := dev.Type().String()
 	if sysinfo != nil {
 		rssi = sysinfo.RSSI
 		hwVersion = sysinfo.HWVersion
 		swVersion = sysinfo.SWVersion
+		deviceID = sysinfo.DeviceID
 	}
 
 	// Build base tags
@@ -180,6 +182,7 @@ func (w *Worker) pollDevice(ctx context.Context, deviceName string, devCfg confi
 		"hw_version":  hwVersion,
 		"sw_version":  swVersion,
 		"device_type": deviceType,
+		"device_id":   deviceID,
 	}
 	statsMetric := metrics.DeviceStatsToMetric(statsTags, float64(result.Duration.Milliseconds()), true, rssi)
 	result.Metrics = append(result.Metrics, statsMetric)
@@ -247,6 +250,24 @@ func (w *Worker) pollChildren(ctx context.Context, parent device.ParentDevice, d
 
 		childMetrics := w.pollEmeter(ctx, child, childName, childCfg.Measurements, childTags)
 		result = append(result, childMetrics...)
+
+		// Create device_stats for each child outlet
+		childStatsTags := map[string]string{
+			"device":      childName,
+			"address":     parentTags["address"],
+			"model":       child.Model(),
+			"hw_version":  "",
+			"sw_version":  "",
+			"device_type": "ChildOutlet",
+			"device_id":   child.DeviceID(),
+			"parent":      deviceName,
+		}
+		if sysinfo := child.SysInfo(); sysinfo != nil {
+			childStatsTags["hw_version"] = sysinfo.HWVersion
+			childStatsTags["sw_version"] = sysinfo.SWVersion
+		}
+		childStatsMetric := metrics.DeviceStatsToMetric(childStatsTags, 0, len(childMetrics) > 0, 0)
+		result = append(result, childStatsMetric)
 	}
 
 	return result
