@@ -13,12 +13,13 @@ import (
 // If echoMode is true, metrics are written to stdout instead of configured backends.
 func CreateMetricsPipeline(cfg *config.Config, logger *slog.Logger, echoMode bool) (*metrics.Pipeline, error) {
 	pipelineCfg := metrics.PipelineConfig{
-		BatchSize:     cfg.Global.BatchSize,
-		FlushInterval: cfg.Global.PollInterval.Duration,
-		RetryAttempts: cfg.Global.RetryAttempts,
-		RetryDelay:    cfg.Global.RetryDelay.Duration,
-		CachePath:     cfg.Global.MetricsCachePath,
-		Logger:        logger,
+		BatchSize:       cfg.Global.BatchSize,
+		FlushInterval:   cfg.Global.PollInterval.Duration,
+		RetryAttempts:   cfg.Global.RetryAttempts,
+		RetryDelay:      cfg.Global.RetryDelay.Duration,
+		CachePath:       cfg.Global.MetricsCachePath,
+		CacheMaxMetrics: cfg.Global.MetricsCacheMaxMetrics,
+		Logger:          logger,
 	}
 	pipeline := metrics.NewPipeline(pipelineCfg)
 

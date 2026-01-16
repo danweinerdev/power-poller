@@ -8,7 +8,8 @@ device_timeout = "5s"     # Timeout for device communication
 batch_size = 10           # Number of metrics to batch before sending
 retry_attempts = 3        # Number of retry attempts on failure
 retry_delay = "1s"        # Delay between retries
-# metrics_cache_path = "/var/lib/kasa-monitor/metrics.cache"  # Cache path for offline metrics (optional)
+# metrics_cache_path = "/var/lib/kasa-monitor/metrics.cache"  # File path for caching metrics when backends unavailable (optional)
+# metrics_cache_max_metrics = 10000  # Maximum number of metrics to cache (default 10000)
 
 [influxdb]
 enabled = true

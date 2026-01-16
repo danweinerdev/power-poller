@@ -12,12 +12,14 @@ import (
 )
 
 var (
-	foreground    bool
-	pidFile       string
-	echoMode      bool
-	ignoreUnknown bool
-	runFor        int
-	runOnce       bool
+	foreground      bool
+	pidFile         string
+	echoMode        bool
+	ignoreUnknown   bool
+	runFor          int
+	runOnce         bool
+	cachePath       string
+	cacheMaxMetrics int
 )
 
 var pollCmd = &cobra.Command{
@@ -32,7 +34,9 @@ Use -o/--foreground to run in foreground mode (no daemonization).
 Use --echo to output metrics to stdout instead of backends (for debugging).
 Use --ignore-unknown to skip devices that are reachable but have unsupported protocols.
 Use --run-for=N to run for N polling iterations then exit.
-Use --run-once to run a single polling iteration then exit (same as --run-for=1).`,
+Use --run-once to run a single polling iteration then exit (same as --run-for=1).
+Use --cache-path to specify a file path for caching metrics when backends are unavailable.
+    The parent directory will be created if it doesn't exist.`,
 	RunE: runPoll,
 }
 
@@ -43,6 +47,8 @@ func init() {
 	pollCmd.Flags().BoolVar(&ignoreUnknown, "ignore-unknown", false, "ignore devices with unrecognized protocols")
 	pollCmd.Flags().IntVar(&runFor, "run-for", 0, "run for N iterations then exit (0 = run indefinitely)")
 	pollCmd.Flags().BoolVar(&runOnce, "run-once", false, "run a single iteration then exit (same as --run-for=1)")
+	pollCmd.Flags().StringVar(&cachePath, "cache-path", "", "file path for caching metrics when backends unavailable (e.g., /var/lib/kasa-monitor/metrics.cache)")
+	pollCmd.Flags().IntVar(&cacheMaxMetrics, "cache-max-metrics", 0, "maximum number of metrics to cache (default 10000)")
 
 	rootCmd.AddCommand(pollCmd)
 }
@@ -63,6 +69,14 @@ func runPoll(cmd *cobra.Command, args []string) error {
 	cfg, err := config.Load(cfgPath)
 	if err != nil {
 		return fmt.Errorf("failed to load config: %w", err)
+	}
+
+	// Override config with CLI flags
+	if cachePath != "" {
+		cfg.Global.MetricsCachePath = cachePath
+	}
+	if cacheMaxMetrics > 0 {
+		cfg.Global.MetricsCacheMaxMetrics = cacheMaxMetrics
 	}
 
 	log.Info("loaded configuration", "path", cfgPath, "devices", len(cfg.Devices))

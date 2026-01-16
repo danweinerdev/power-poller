@@ -15,13 +15,14 @@ type Config struct {
 
 // GlobalConfig contains global application settings.
 type GlobalConfig struct {
-	PollInterval     Duration `toml:"poll_interval"`
-	LogLevel         string   `toml:"log_level"`
-	DeviceTimeout    Duration `toml:"device_timeout"`
-	BatchSize        int      `toml:"batch_size"`
-	RetryAttempts    int      `toml:"retry_attempts"`
-	RetryDelay       Duration `toml:"retry_delay"`
-	MetricsCachePath string   `toml:"metrics_cache_path"`
+	PollInterval           Duration `toml:"poll_interval"`
+	LogLevel               string   `toml:"log_level"`
+	DeviceTimeout          Duration `toml:"device_timeout"`
+	BatchSize              int      `toml:"batch_size"`
+	RetryAttempts          int      `toml:"retry_attempts"`
+	RetryDelay             Duration `toml:"retry_delay"`
+	MetricsCachePath       string   `toml:"metrics_cache_path"`
+	MetricsCacheMaxMetrics int      `toml:"metrics_cache_max_metrics"`
 }
 
 // InfluxDBConfig contains InfluxDB connection settings.
