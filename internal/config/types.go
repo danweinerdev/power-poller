@@ -15,12 +15,13 @@ type Config struct {
 
 // GlobalConfig contains global application settings.
 type GlobalConfig struct {
-	PollInterval  Duration `toml:"poll_interval"`
-	LogLevel      string   `toml:"log_level"`
-	DeviceTimeout Duration `toml:"device_timeout"`
-	BatchSize     int      `toml:"batch_size"`
-	RetryAttempts int      `toml:"retry_attempts"`
-	RetryDelay    Duration `toml:"retry_delay"`
+	PollInterval     Duration `toml:"poll_interval"`
+	LogLevel         string   `toml:"log_level"`
+	DeviceTimeout    Duration `toml:"device_timeout"`
+	BatchSize        int      `toml:"batch_size"`
+	RetryAttempts    int      `toml:"retry_attempts"`
+	RetryDelay       Duration `toml:"retry_delay"`
+	MetricsCachePath string   `toml:"metrics_cache_path"`
 }
 
 // InfluxDBConfig contains InfluxDB connection settings.
@@ -98,10 +99,10 @@ type MeasurementConfig struct {
 type FieldType string
 
 const (
-	FieldTypeFloat   FieldType = "float"
-	FieldTypeInt     FieldType = "int"
-	FieldTypeString  FieldType = "string"
-	FieldTypeBool    FieldType = "bool"
+	FieldTypeFloat  FieldType = "float"
+	FieldTypeInt    FieldType = "int"
+	FieldTypeString FieldType = "string"
+	FieldTypeBool   FieldType = "bool"
 )
 
 // Duration is a wrapper around time.Duration that supports TOML parsing.

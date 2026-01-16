@@ -17,6 +17,7 @@ func CreateMetricsPipeline(cfg *config.Config, logger *slog.Logger, echoMode boo
 		FlushInterval: cfg.Global.PollInterval.Duration,
 		RetryAttempts: cfg.Global.RetryAttempts,
 		RetryDelay:    cfg.Global.RetryDelay.Duration,
+		CachePath:     cfg.Global.MetricsCachePath,
 		Logger:        logger,
 	}
 	pipeline := metrics.NewPipeline(pipelineCfg)

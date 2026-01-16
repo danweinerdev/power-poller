@@ -27,36 +27,43 @@ type Backend interface {
 
 // Pipeline manages metric batching and delivery to backends.
 type Pipeline struct {
-	backends   []Backend
-	batchSize  int
-	flushInterval time.Duration
-	retryAttempts int
-	retryDelay    time.Duration
+	backends        []Backend
+	batchSize       int
+	flushInterval   time.Duration
+	retryAttempts   int
+	retryDelay      time.Duration
+	recoverInterval time.Duration
+	cache           *Cache
 
-	mu       sync.Mutex
-	buffer   []*Metric
-	done     chan struct{}
-	wg       sync.WaitGroup
-	logger   *slog.Logger
+	mu          sync.Mutex
+	buffer      []*Metric
+	lastAttempt map[string]time.Time // backend name -> last attempt time
+	done        chan struct{}
+	wg          sync.WaitGroup
+	logger      *slog.Logger
 }
 
 // PipelineConfig configures the metric pipeline.
 type PipelineConfig struct {
-	BatchSize     int
-	FlushInterval time.Duration
-	RetryAttempts int
-	RetryDelay    time.Duration
-	Logger        *slog.Logger
+	BatchSize       int
+	FlushInterval   time.Duration
+	RetryAttempts   int
+	RetryDelay      time.Duration
+	RecoverInterval time.Duration // How often to retry unhealthy backends
+	CachePath       string        // Path for file-backed cache (empty = disabled)
+	CacheMaxMetrics int           // Max metrics to cache (0 = default 10000)
+	Logger          *slog.Logger
 }
 
 // DefaultPipelineConfig returns sensible pipeline defaults.
 func DefaultPipelineConfig() PipelineConfig {
 	return PipelineConfig{
-		BatchSize:     10,
-		FlushInterval: 10 * time.Second,
-		RetryAttempts: 3,
-		RetryDelay:    1 * time.Second,
-		Logger:        slog.Default(),
+		BatchSize:       10,
+		FlushInterval:   10 * time.Second,
+		RetryAttempts:   3,
+		RetryDelay:      1 * time.Second,
+		RecoverInterval: 30 * time.Second,
+		Logger:          slog.Default(),
 	}
 }
 
@@ -74,19 +81,39 @@ func NewPipeline(cfg PipelineConfig) *Pipeline {
 	if cfg.RetryDelay <= 0 {
 		cfg.RetryDelay = 1 * time.Second
 	}
+	if cfg.RecoverInterval <= 0 {
+		cfg.RecoverInterval = 30 * time.Second
+	}
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}
 
+	// Create cache if path is configured
+	var cache *Cache
+	if cfg.CachePath != "" {
+		cacheCfg := CacheConfig{
+			Path:       cfg.CachePath,
+			MaxMetrics: cfg.CacheMaxMetrics,
+			Logger:     cfg.Logger,
+		}
+		if cacheCfg.MaxMetrics == 0 {
+			cacheCfg.MaxMetrics = 10000
+		}
+		cache = NewCache(cacheCfg)
+	}
+
 	return &Pipeline{
-		backends:      make([]Backend, 0),
-		batchSize:     cfg.BatchSize,
-		flushInterval: cfg.FlushInterval,
-		retryAttempts: cfg.RetryAttempts,
-		retryDelay:    cfg.RetryDelay,
-		buffer:        make([]*Metric, 0, cfg.BatchSize),
-		done:          make(chan struct{}),
-		logger:        cfg.Logger,
+		backends:        make([]Backend, 0),
+		batchSize:       cfg.BatchSize,
+		flushInterval:   cfg.FlushInterval,
+		retryAttempts:   cfg.RetryAttempts,
+		retryDelay:      cfg.RetryDelay,
+		recoverInterval: cfg.RecoverInterval,
+		cache:           cache,
+		buffer:          make([]*Metric, 0, cfg.BatchSize),
+		lastAttempt:     make(map[string]time.Time),
+		done:            make(chan struct{}),
+		logger:          cfg.Logger,
 	}
 }
 
@@ -103,6 +130,12 @@ func (p *Pipeline) Start(ctx context.Context) error {
 			return err
 		}
 		p.logger.Info("backend initialized", "backend", b.Name())
+	}
+
+	// Flush any cached metrics from previous runs
+	if p.cache != nil && p.cache.Enabled() && p.cache.Count() > 0 {
+		p.logger.Info("found cached metrics from previous run", "count", p.cache.Count())
+		p.flushCache(ctx)
 	}
 
 	// Start periodic flush
@@ -173,19 +206,98 @@ func (p *Pipeline) Flush(ctx context.Context) error {
 	p.logger.Debug("flushing metrics", "count", len(batch))
 
 	var lastErr error
+	anySuccess := false
+
 	for _, b := range p.backends {
-		if !b.Healthy() {
-			p.logger.Warn("skipping unhealthy backend", "backend", b.Name())
-			continue
+		wasUnhealthy := !b.Healthy()
+
+		if wasUnhealthy {
+			// Check if we should attempt recovery
+			if !p.shouldAttemptRecovery(b.Name()) {
+				p.logger.Debug("skipping unhealthy backend, waiting for recovery interval",
+					"backend", b.Name())
+				continue
+			}
+			p.logger.Info("attempting recovery for unhealthy backend", "backend", b.Name())
 		}
+
+		p.recordAttempt(b.Name())
 
 		if err := p.writeWithRetry(ctx, b, batch); err != nil {
 			p.logger.Error("backend write failed", "backend", b.Name(), "error", err)
 			lastErr = err
+		} else {
+			anySuccess = true
+			// If backend recovered, try to flush cached metrics
+			if wasUnhealthy && p.cache != nil && p.cache.Count() > 0 {
+				p.logger.Info("backend recovered, flushing cached metrics", "backend", b.Name())
+				if flushed, err := p.cache.FlushTo(ctx, b); err != nil {
+					p.logger.Error("failed to flush cache to recovered backend",
+						"backend", b.Name(), "error", err)
+				} else if flushed > 0 {
+					p.logger.Info("flushed cached metrics to recovered backend",
+						"backend", b.Name(), "count", flushed)
+				}
+			}
+		}
+	}
+
+	// If all backends failed, cache the metrics
+	if !anySuccess && lastErr != nil && p.cache != nil {
+		p.logger.Warn("all backends failed, caching metrics", "count", len(batch))
+		if err := p.cache.Append(batch); err != nil {
+			p.logger.Error("failed to cache metrics", "error", err)
 		}
 	}
 
 	return lastErr
+}
+
+// flushCache attempts to flush cached metrics to any healthy backend.
+func (p *Pipeline) flushCache(ctx context.Context) {
+	if p.cache == nil || !p.cache.Enabled() || p.cache.Count() == 0 {
+		return
+	}
+
+	for _, b := range p.backends {
+		if !b.Healthy() {
+			continue
+		}
+
+		flushed, err := p.cache.FlushTo(ctx, b)
+		if err != nil {
+			p.logger.Error("failed to flush cache on startup",
+				"backend", b.Name(), "error", err)
+			continue
+		}
+
+		if flushed > 0 {
+			p.logger.Info("flushed cached metrics on startup",
+				"backend", b.Name(), "count", flushed)
+			return // Successfully flushed to one backend
+		}
+	}
+
+	p.logger.Warn("no healthy backends available to flush cache")
+}
+
+// shouldAttemptRecovery checks if enough time has passed to retry an unhealthy backend.
+func (p *Pipeline) shouldAttemptRecovery(name string) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	last, ok := p.lastAttempt[name]
+	if !ok {
+		return true // Never attempted, try it
+	}
+	return time.Since(last) >= p.recoverInterval
+}
+
+// recordAttempt records when we last attempted to write to a backend.
+func (p *Pipeline) recordAttempt(name string) {
+	p.mu.Lock()
+	p.lastAttempt[name] = time.Now()
+	p.mu.Unlock()
 }
 
 // writeWithRetry attempts to write to a backend with retries.

@@ -283,10 +283,10 @@ type flakyBackend struct {
 	writeCalls int32
 }
 
-func (f *flakyBackend) Name() string { return f.name }
+func (f *flakyBackend) Name() string                         { return f.name }
 func (f *flakyBackend) Initialize(ctx context.Context) error { return nil }
-func (f *flakyBackend) Close() error { return nil }
-func (f *flakyBackend) Healthy() bool { return f.healthy }
+func (f *flakyBackend) Close() error                         { return nil }
+func (f *flakyBackend) Healthy() bool                        { return f.healthy }
 
 func (f *flakyBackend) Write(ctx context.Context, batch []*Metric) error {
 	atomic.AddInt32(&f.writeCalls, 1)
@@ -365,8 +365,14 @@ func TestPipeline_Flush_RetryExhausted(t *testing.T) {
 	}
 }
 
-func TestPipeline_Flush_SkipsUnhealthyBackend(t *testing.T) {
-	p := NewPipeline(DefaultPipelineConfig())
+func TestPipeline_Flush_SkipsUnhealthyBackendWithinRecoverInterval(t *testing.T) {
+	p := NewPipeline(PipelineConfig{
+		BatchSize:       10,
+		FlushInterval:   10 * time.Second,
+		RetryAttempts:   1,
+		RetryDelay:      10 * time.Millisecond,
+		RecoverInterval: 1 * time.Hour, // Long interval so we don't recover
+	})
 	backend := &mockBackend{
 		name:    "unhealthy",
 		healthy: false,
@@ -379,6 +385,9 @@ func TestPipeline_Flush_SkipsUnhealthyBackend(t *testing.T) {
 	}
 	defer p.Stop(ctx)
 
+	// Record a recent attempt so we're within the recovery interval
+	p.recordAttempt(backend.Name())
+
 	m := NewMetric("test").WithField("value", 1)
 	p.Push(m)
 
@@ -388,7 +397,92 @@ func TestPipeline_Flush_SkipsUnhealthyBackend(t *testing.T) {
 	}
 
 	if backend.WriteCalls() != 0 {
-		t.Errorf("unhealthy backend should not receive writes")
+		t.Errorf("unhealthy backend should not receive writes within recovery interval")
+	}
+}
+
+func TestPipeline_Flush_AttemptsRecoveryAfterInterval(t *testing.T) {
+	p := NewPipeline(PipelineConfig{
+		BatchSize:       10,
+		FlushInterval:   10 * time.Second,
+		RetryAttempts:   1,
+		RetryDelay:      10 * time.Millisecond,
+		RecoverInterval: 10 * time.Millisecond, // Short interval for testing
+	})
+	backend := &mockBackend{
+		name:    "unhealthy",
+		healthy: false,
+	}
+	p.AddBackend(backend)
+
+	ctx := context.Background()
+	if err := p.Start(ctx); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	defer p.Stop(ctx)
+
+	// Record an old attempt
+	p.mu.Lock()
+	p.lastAttempt[backend.Name()] = time.Now().Add(-1 * time.Second)
+	p.mu.Unlock()
+
+	m := NewMetric("test").WithField("value", 1)
+	p.Push(m)
+
+	// Should attempt recovery since interval has passed
+	p.Flush(ctx) // May error since backend is unhealthy, that's expected
+
+	if backend.WriteCalls() == 0 {
+		t.Errorf("expected recovery attempt for unhealthy backend after interval")
+	}
+}
+
+func TestPipeline_Flush_RecoverySucceeds(t *testing.T) {
+	p := NewPipeline(PipelineConfig{
+		BatchSize:       10,
+		FlushInterval:   10 * time.Second,
+		RetryAttempts:   1,
+		RetryDelay:      10 * time.Millisecond,
+		RecoverInterval: 10 * time.Millisecond,
+	})
+
+	// Start unhealthy, but write will succeed and set healthy=true
+	backend := &mockBackend{
+		name:    "recovering",
+		healthy: false,
+	}
+	p.AddBackend(backend)
+
+	ctx := context.Background()
+	if err := p.Start(ctx); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	defer p.Stop(ctx)
+
+	// Push and flush - first attempt is a recovery attempt
+	m := NewMetric("test").WithField("value", 1)
+	p.Push(m)
+
+	if err := p.Flush(ctx); err != nil {
+		t.Errorf("Flush() error = %v", err)
+	}
+
+	if backend.WriteCalls() != 1 {
+		t.Errorf("expected 1 write call, got %d", backend.WriteCalls())
+	}
+
+	// Backend should now be healthy (mockBackend.Write sets healthy=true)
+	// Push another metric - should write normally now
+	backend.healthy = true // Simulate successful recovery
+	m2 := NewMetric("test").WithField("value", 2)
+	p.Push(m2)
+
+	if err := p.Flush(ctx); err != nil {
+		t.Errorf("second Flush() error = %v", err)
+	}
+
+	if backend.WriteCalls() != 2 {
+		t.Errorf("expected 2 write calls after recovery, got %d", backend.WriteCalls())
 	}
 }
 
