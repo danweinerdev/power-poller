@@ -6,9 +6,11 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/danweinerdev/go-power-poller/internal/config"
-	"github.com/danweinerdev/go-power-poller/internal/daemon"
-	"github.com/danweinerdev/go-power-poller/internal/poller"
+	"github.com/danweinerdev/power-poller/internal/backend"
+	"github.com/danweinerdev/power-poller/internal/config"
+	"github.com/danweinerdev/power-poller/internal/daemon"
+	"github.com/danweinerdev/power-poller/internal/metrics"
+	"github.com/danweinerdev/power-poller/internal/poller"
 )
 
 var (
@@ -96,9 +98,31 @@ func runPoll(cmd *cobra.Command, args []string) error {
 	ctx := sigHandler.Start(context.Background())
 
 	// Create pipeline
-	pipeline, err := CreateMetricsPipeline(cfg, log, echoMode)
-	if err != nil {
-		return fmt.Errorf("failed to create metrics pipeline: %w", err)
+	pipelineCfg := metrics.PipelineConfig{
+		BatchSize:       cfg.Global.BatchSize,
+		FlushInterval:   cfg.Global.PollInterval.Duration,
+		RetryAttempts:   cfg.Global.RetryAttempts,
+		RetryDelay:      cfg.Global.RetryDelay.Duration,
+		CachePath:       cfg.Global.MetricsCachePath,
+		CacheMaxMetrics: cfg.Global.MetricsCacheMaxMetrics,
+		Logger:          log,
+	}
+	pipeline := metrics.NewPipeline(pipelineCfg)
+
+	// Add backends
+	if echoMode {
+		pipeline.AddBackend(backend.NewEchoStdout(log))
+	} else {
+		if cfg.InfluxDB.Enabled {
+			pipeline.AddBackend(backend.NewInfluxDB(cfg.InfluxDB, log))
+		}
+		if cfg.Prometheus.Enabled {
+			pipeline.AddBackend(backend.NewPrometheus(cfg.Prometheus, log))
+		}
+	}
+
+	if pipeline.BackendCount() == 0 {
+		return fmt.Errorf("no backends configured (enable influxdb, prometheus, or use --echo)")
 	}
 
 	// Start pipeline
