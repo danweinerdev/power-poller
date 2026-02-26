@@ -13,6 +13,9 @@ GO = go
 BUILD_DIR = bin
 LDFLAGS = -ldflags="-s -w"
 
+# Container runtime detection (podman > docker > container)
+CONTAINER_RUNTIME := $(shell command -v podman 2>/dev/null || command -v docker 2>/dev/null || command -v container 2>/dev/null)
+
 # Colors for output
 COLOR_RESET = \033[0m
 COLOR_BOLD = \033[1m
@@ -109,17 +112,13 @@ clean: ## Clean build artifacts
 
 ##@ Docker
 
-docker-build: ## Build Docker image
-	@printf "$(COLOR_GREEN)Building Docker image...$(COLOR_RESET)\n"
-	docker build -f Containerfile -t kasa-monitor:latest .
-	@printf "$(COLOR_GREEN)Docker image built!$(COLOR_RESET)\n"
-
-docker-run: ## Run Docker container
-	@printf "$(COLOR_GREEN)Running Docker container...$(COLOR_RESET)\n"
-	docker run -d \
-		-v $$(pwd)/config/example.toml:/etc/kasa-monitor/config.toml:ro \
-		--name kasa-monitor \
-		kasa-monitor:latest
+container: ## Build container image
+ifndef CONTAINER_RUNTIME
+	$(error No container runtime found. Install podman, docker, or container.)
+endif
+	@printf "$(COLOR_GREEN)Building container image with $(CONTAINER_RUNTIME)...$(COLOR_RESET)\n"
+	$(CONTAINER_RUNTIME) build -f Containerfile -t kasa-monitor:latest .
+	@printf "$(COLOR_GREEN)Container image built!$(COLOR_RESET)\n"
 
 ##@ CI/CD
 
