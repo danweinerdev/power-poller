@@ -1,4 +1,4 @@
-module github.com/danweinerdev/go-power-poller
+module github.com/danweinerdev/power-poller
 
 go 1.25.5
 

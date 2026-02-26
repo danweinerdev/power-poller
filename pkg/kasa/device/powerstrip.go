@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/danweinerdev/go-power-poller/pkg/kasa/command"
-	"github.com/danweinerdev/go-power-poller/pkg/kasa/protocol"
-	"github.com/danweinerdev/go-power-poller/pkg/kasa/types"
+	"github.com/danweinerdev/power-poller/pkg/kasa/command"
+	"github.com/danweinerdev/power-poller/pkg/kasa/protocol"
+	"github.com/danweinerdev/power-poller/pkg/kasa/types"
 )
 
 // PowerStrip represents a KASA smart power strip with multiple outlets.

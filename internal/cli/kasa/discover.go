@@ -11,7 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/danweinerdev/go-power-poller/pkg/kasa/protocol"
+	"github.com/danweinerdev/power-poller/pkg/kasa/protocol"
 )
 
 var (

@@ -5,10 +5,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/danweinerdev/go-power-poller/pkg/kasa/device"
-	"github.com/danweinerdev/go-power-poller/pkg/kasa/protocol"
-	"github.com/danweinerdev/go-power-poller/pkg/kasa/types"
-	"github.com/danweinerdev/go-power-poller/pkg/mockdevice"
+	"github.com/danweinerdev/power-poller/pkg/kasa/device"
+	"github.com/danweinerdev/power-poller/pkg/kasa/protocol"
+	"github.com/danweinerdev/power-poller/pkg/kasa/types"
+	"github.com/danweinerdev/power-poller/pkg/mockdevice"
 )
 
 func TestLoad_Plug(t *testing.T) {

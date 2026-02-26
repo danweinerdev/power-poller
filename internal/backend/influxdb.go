@@ -10,8 +10,8 @@ import (
 	"github.com/influxdata/influxdb-client-go/v2/api"
 	"github.com/influxdata/influxdb-client-go/v2/api/write"
 
-	"github.com/danweinerdev/go-power-poller/internal/config"
-	"github.com/danweinerdev/go-power-poller/internal/metrics"
+	"github.com/danweinerdev/power-poller/internal/config"
+	"github.com/danweinerdev/power-poller/internal/metrics"
 )
 
 // InfluxDB implements the Backend interface for InfluxDB 2.x.

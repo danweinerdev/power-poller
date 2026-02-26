@@ -7,7 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/danweinerdev/go-power-poller/pkg/kasa/command"
+	"github.com/danweinerdev/power-poller/pkg/kasa/command"
 )
 
 var sysinfoCmd = &cobra.Command{

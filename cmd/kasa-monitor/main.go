@@ -1,6 +1,6 @@
 package main
 
-import "github.com/danweinerdev/go-power-poller/internal/cli"
+import "github.com/danweinerdev/power-poller/internal/cli"
 
 func main() {
 	cli.Execute()

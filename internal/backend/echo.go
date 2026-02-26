@@ -8,7 +8,7 @@ import (
 	"os"
 	"sync"
 
-	"github.com/danweinerdev/go-power-poller/internal/metrics"
+	"github.com/danweinerdev/power-poller/internal/metrics"
 )
 
 // Echo is a debug backend that writes metrics to an io.Writer.

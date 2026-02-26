@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/danweinerdev/go-power-poller/internal/config"
-	"github.com/danweinerdev/go-power-poller/internal/metrics"
+	"github.com/danweinerdev/power-poller/internal/config"
+	"github.com/danweinerdev/power-poller/internal/metrics"
 )
 
 // mockBackend is a test backend for the pipeline.

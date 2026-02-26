@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/danweinerdev/go-power-poller/pkg/kasa/device"
-	"github.com/danweinerdev/go-power-poller/pkg/kasa/types"
+	"github.com/danweinerdev/power-poller/pkg/kasa/device"
+	"github.com/danweinerdev/power-poller/pkg/kasa/types"
 	"github.com/spf13/cobra"
 )
 

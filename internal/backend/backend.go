@@ -3,7 +3,7 @@ package backend
 import (
 	"context"
 
-	"github.com/danweinerdev/go-power-poller/internal/metrics"
+	"github.com/danweinerdev/power-poller/internal/metrics"
 )
 
 // Backend defines the interface for metric storage backends.

@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/danweinerdev/go-power-poller/pkg/kasa/command"
-	"github.com/danweinerdev/go-power-poller/pkg/kasa/protocol"
+	"github.com/danweinerdev/power-poller/pkg/kasa/command"
+	"github.com/danweinerdev/power-poller/pkg/kasa/protocol"
 )
 
 func TestMockDevice_StartStop(t *testing.T) {

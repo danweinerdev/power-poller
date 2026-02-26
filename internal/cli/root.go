@@ -7,7 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/danweinerdev/go-power-poller/internal/cli/kasa"
+	"github.com/danweinerdev/power-poller/internal/cli/kasa"
 )
 
 var (

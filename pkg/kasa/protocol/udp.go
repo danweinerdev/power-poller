@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/danweinerdev/go-power-poller/pkg/kasa/types"
+	"github.com/danweinerdev/power-poller/pkg/kasa/types"
 )
 
 // DiscoveredDevice represents a device found during network discovery.

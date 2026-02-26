@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/danweinerdev/go-power-poller/internal/metrics"
+	"github.com/danweinerdev/power-poller/internal/metrics"
 )
 
 func TestEcho_New(t *testing.T) {

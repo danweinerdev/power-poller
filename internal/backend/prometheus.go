@@ -11,8 +11,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
-	"github.com/danweinerdev/go-power-poller/internal/config"
-	"github.com/danweinerdev/go-power-poller/internal/metrics"
+	"github.com/danweinerdev/power-poller/internal/config"
+	"github.com/danweinerdev/power-poller/internal/metrics"
 )
 
 // Prometheus implements the Backend interface for Prometheus.

@@ -1,15 +1,12 @@
 # Makefile for KASA Monitor (Go)
 # Copyright 2019-2024 Daniel Weiner
 
-.PHONY: help build test test-verbose test-coverage clean install lint docker-build docker-run docker-stop all
-
-# Default target
-.DEFAULT_GOAL := help
+.PHONY: help build test test-verbose test-coverage clean install lint docker-build docker-run docker-stop
 
 # Package information
 PACKAGE_NAME = kasa-monitor
 BINARY = kasa-monitor
-MODULE = github.com/danweinerdev/go-power-poller
+MODULE = github.com/danweinerdev/power-poller
 
 # Build settings
 GO = go
@@ -22,6 +19,9 @@ COLOR_BOLD = \033[1m
 COLOR_GREEN = \033[32m
 COLOR_YELLOW = \033[33m
 COLOR_BLUE = \033[34m
+
+all: clean test test-all build-all
+	@printf "$(COLOR_GREEN)Full pipeline complete!$(COLOR_RESET)\n"
 
 ##@ Help
 
@@ -55,11 +55,6 @@ build-windows: ## Build for Windows
 build-all: build-linux build-darwin build-windows ## Build for all platforms
 	@printf "$(COLOR_GREEN)All platforms built!$(COLOR_RESET)\n"
 
-install: ## Install the binary to GOPATH/bin
-	@printf "$(COLOR_GREEN)Installing $(BINARY)...$(COLOR_RESET)\n"
-	$(GO) install $(LDFLAGS) ./cmd/kasa-monitor
-	@printf "$(COLOR_GREEN)Installed!$(COLOR_RESET)\n"
-
 ##@ Testing
 
 test: ## Run all tests
@@ -80,9 +75,7 @@ test-race: ## Run tests with race detector
 	@printf "$(COLOR_YELLOW)Running tests with race detector...$(COLOR_RESET)\n"
 	$(GO) test -race ./...
 
-bench: ## Run benchmarks
-	@printf "$(COLOR_YELLOW)Running benchmarks...$(COLOR_RESET)\n"
-	$(GO) test -bench=. -benchmem ./...
+test-all: test test-coverage test-race
 
 ##@ Code Quality
 
@@ -128,46 +121,7 @@ docker-run: ## Run Docker container
 		--name kasa-monitor \
 		kasa-monitor:latest
 
-docker-stop: ## Stop Docker container
-	@printf "$(COLOR_YELLOW)Stopping Docker container...$(COLOR_RESET)\n"
-	docker stop kasa-monitor
-	docker rm kasa-monitor
-
-##@ Dependencies
-
-deps: ## Download dependencies
-	@printf "$(COLOR_GREEN)Downloading dependencies...$(COLOR_RESET)\n"
-	$(GO) mod download
-
-deps-tidy: ## Tidy dependencies
-	@printf "$(COLOR_GREEN)Tidying dependencies...$(COLOR_RESET)\n"
-	$(GO) mod tidy
-
-deps-upgrade: ## Upgrade all dependencies
-	@printf "$(COLOR_GREEN)Upgrading dependencies...$(COLOR_RESET)\n"
-	$(GO) get -u ./...
-	$(GO) mod tidy
-
-##@ Development
-
-run: build ## Build and run the poller with echo mode
-	@printf "$(COLOR_GREEN)Running with echo mode...$(COLOR_RESET)\n"
-	./$(BUILD_DIR)/$(BINARY) poll --echo -c config/example.toml
-
-status: build ## Build and run status command
-	@if [ -z "$(DEVICE)" ]; then \
-		printf "$(COLOR_YELLOW)Usage: make status DEVICE=192.168.1.100$(COLOR_RESET)\n"; \
-	else \
-		./$(BUILD_DIR)/$(BINARY) status -d $(DEVICE); \
-	fi
-
-version: build ## Show version
-	./$(BUILD_DIR)/$(BINARY) version
-
 ##@ CI/CD
 
 ci: deps test lint ## Run CI pipeline
 	@printf "$(COLOR_GREEN)CI pipeline complete!$(COLOR_RESET)\n"
-
-all: clean deps test build ## Run full pipeline (clean, deps, test, build)
-	@printf "$(COLOR_GREEN)Full pipeline complete!$(COLOR_RESET)\n"

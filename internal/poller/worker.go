@@ -6,10 +6,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/danweinerdev/go-power-poller/internal/config"
-	"github.com/danweinerdev/go-power-poller/internal/metrics"
-	"github.com/danweinerdev/go-power-poller/pkg/kasa/device"
-	"github.com/danweinerdev/go-power-poller/pkg/kasa/protocol"
+	"github.com/danweinerdev/power-poller/internal/config"
+	"github.com/danweinerdev/power-poller/internal/metrics"
+	"github.com/danweinerdev/power-poller/pkg/kasa/device"
+	"github.com/danweinerdev/power-poller/pkg/kasa/protocol"
 )
 
 // DeviceResult represents the result of polling a single device.

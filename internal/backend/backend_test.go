@@ -6,7 +6,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/danweinerdev/go-power-poller/internal/metrics"
+	"github.com/danweinerdev/power-poller/internal/metrics"
 )
 
 // mockBackend is a configurable mock backend for testing.

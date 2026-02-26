@@ -3,9 +3,9 @@ package device
 import (
 	"context"
 
-	"github.com/danweinerdev/go-power-poller/pkg/kasa/command"
-	"github.com/danweinerdev/go-power-poller/pkg/kasa/protocol"
-	"github.com/danweinerdev/go-power-poller/pkg/kasa/types"
+	"github.com/danweinerdev/power-poller/pkg/kasa/command"
+	"github.com/danweinerdev/power-poller/pkg/kasa/protocol"
+	"github.com/danweinerdev/power-poller/pkg/kasa/types"
 )
 
 // LightStrip represents a KASA light strip.

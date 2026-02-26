@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/danweinerdev/go-power-poller/internal/config"
-	"github.com/danweinerdev/go-power-poller/pkg/kasa/protocol"
-	"github.com/danweinerdev/go-power-poller/pkg/mockdevice"
+	"github.com/danweinerdev/power-poller/internal/config"
+	"github.com/danweinerdev/power-poller/pkg/kasa/protocol"
+	"github.com/danweinerdev/power-poller/pkg/mockdevice"
 )
 
 func TestWorker_NewWorker(t *testing.T) {

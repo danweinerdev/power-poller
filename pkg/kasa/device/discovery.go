@@ -5,9 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/danweinerdev/go-power-poller/pkg/kasa/command"
-	"github.com/danweinerdev/go-power-poller/pkg/kasa/protocol"
-	"github.com/danweinerdev/go-power-poller/pkg/kasa/types"
+	"github.com/danweinerdev/power-poller/pkg/kasa/command"
+	"github.com/danweinerdev/power-poller/pkg/kasa/protocol"
+	"github.com/danweinerdev/power-poller/pkg/kasa/types"
 )
 
 // LoadOptions configures device loading behavior.

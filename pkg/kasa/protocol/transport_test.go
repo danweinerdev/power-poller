@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/danweinerdev/go-power-poller/pkg/mockdevice"
+	"github.com/danweinerdev/power-poller/pkg/mockdevice"
 )
 
 func TestTransport_NewTransport(t *testing.T) {

@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/danweinerdev/go-power-poller/internal/config"
-	"github.com/danweinerdev/go-power-poller/internal/metrics"
+	"github.com/danweinerdev/power-poller/internal/config"
+	"github.com/danweinerdev/power-poller/internal/metrics"
 )
 
 func TestInfluxDB_New(t *testing.T) {
